@@ -41,9 +41,58 @@ function isAllowed(command: string, config: AgentBudgetConfig): boolean {
   return config.commands.allowed.some((allowed) => command === allowed || command.startsWith(`${allowed} `));
 }
 
+function inferredAllowedCommands(repoRoot: string): string[] {
+  const commands = new Set<string>();
+  const packageJson = path.join(repoRoot, "package.json");
+  if (fs.existsSync(packageJson)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8")) as { scripts?: Record<string, string> };
+      if (pkg.scripts?.test) {
+        commands.add("npm test");
+        commands.add("pnpm test");
+        commands.add("yarn test");
+      }
+      if (pkg.scripts?.lint) {
+        commands.add("npm run lint");
+        commands.add("pnpm lint");
+        commands.add("yarn lint");
+      }
+      if (pkg.scripts?.build) {
+        commands.add("npm run build");
+        commands.add("pnpm build");
+        commands.add("yarn build");
+      }
+      if (pkg.scripts?.typecheck) {
+        commands.add("npm run typecheck");
+        commands.add("pnpm typecheck");
+        commands.add("yarn typecheck");
+      }
+    } catch {
+      // Ignore malformed package metadata; explicit config still applies.
+    }
+  }
+  if (fs.existsSync(path.join(repoRoot, "gradlew")) || fs.existsSync(path.join(repoRoot, "build.gradle.kts")) || fs.existsSync(path.join(repoRoot, "build.gradle"))) {
+    commands.add("./gradlew test");
+    commands.add("./gradlew testDebugUnitTest");
+    commands.add("./gradlew lint");
+    commands.add("./gradlew detekt");
+  }
+  if (fs.existsSync(path.join(repoRoot, "Cargo.toml"))) {
+    commands.add("cargo test");
+    commands.add("cargo check");
+    commands.add("cargo clippy");
+  }
+  return [...commands];
+}
+
+function isAllowedWithDiscovery(repoRoot: string, command: string, config: AgentBudgetConfig): boolean {
+  const discovered = { ...config, commands: { ...config.commands, allowed: [...config.commands.allowed, ...inferredAllowedCommands(repoRoot)] } };
+  return isAllowed(command, discovered);
+}
+
 export async function runSummary(repoRoot: string, kind: CommandSummary["kind"], commandParts: string[], allowUnconfigured = false, config = loadConfig(repoRoot)): Promise<CommandSummary> {
   const command = commandParts.join(" ");
-  if (!allowUnconfigured && !isAllowed(command, config)) {
+  if (!allowUnconfigured && !isAllowedWithDiscovery(repoRoot, command, config)) {
     throw new Error(`Command is not allowed by agent-budget.config.json: ${command}`);
   }
   const logDir = path.join(stateDir(repoRoot), "logs");

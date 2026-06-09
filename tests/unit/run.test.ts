@@ -22,4 +22,13 @@ describe("command summary", () => {
     expect(result.summaryChars).toBeLessThan(8000);
     expect(result.compressionRatio).toBeLessThan(0.5);
   });
+
+  it("allows common Gradle test commands when Gradle metadata exists", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-gradle-"));
+    fs.writeFileSync(path.join(dir, "build.gradle.kts"), "");
+    fs.writeFileSync(path.join(dir, "gradlew"), "#!/bin/sh\necho ok\n");
+    fs.chmodSync(path.join(dir, "gradlew"), 0o755);
+    const result = await runSummary(dir, "test", ["./gradlew", "testDebugUnitTest"], false);
+    expect(result.exitCode).toBe(0);
+  });
 });

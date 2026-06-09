@@ -19,6 +19,7 @@ describe("dossier", () => {
   it("stays within budget and includes commands", async () => {
     const dossier = await generateDossier(fixture, "tooltip reconnect", 1000);
     expect(dossier.markdown.length).toBeLessThanOrEqual(1100);
+    expect(dossier.markdown).toContain("Ranking confidence");
     expect(dossier.markdown).toContain("pnpm tsc --noEmit");
   });
 });

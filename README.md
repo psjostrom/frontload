@@ -20,6 +20,7 @@ agent-budget search "tooltip reconnect" --repo . --limit 10
 agent-budget read src/chart/ChartTooltip.tsx --repo . --budget 4000
 agent-budget run --repo . --kind test -- pnpm test
 agent-budget diff --repo .
+agent-budget compare-cost --repo . --base HEAD~1 --head HEAD
 agent-budget budget --repo .
 agent-budget mcp --repo .
 ```

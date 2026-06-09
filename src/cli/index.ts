@@ -9,22 +9,26 @@ import { loadConfig } from "../config/config.js";
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
 import { generateDossier, searchIndex } from "../dossier/dossier.js";
-import { gitDiffSummary } from "../diff/diff.js";
+import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { startMcp } from "../mcp/server.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
 
-async function measured<T>(repoRoot: string, operation: string, input: unknown, fn: () => Promise<T> | T): Promise<T> {
+function outputLength(data: unknown): number {
+  return (typeof data === "string" ? data : JSON.stringify(data, null, 2)).length;
+}
+
+async function measured<T>(repoRoot: string, operation: string, input: unknown, fn: () => Promise<T> | T, logOutput?: (result: T) => unknown): Promise<T> {
   const start = Date.now();
   let success = false;
-  let output = "";
+  let outputChars = 0;
   try {
     const result = await fn();
     success = true;
-    output = typeof result === "string" ? result : JSON.stringify(result);
+    outputChars = outputLength(logOutput ? logOutput(result) : result);
     return result;
   } finally {
-    appendEvent(repoRoot, { source: "cli", operation, inputChars: JSON.stringify(input).length, outputChars: output.length, durationMs: Date.now() - start, success });
+    appendEvent(repoRoot, { source: "cli", operation, inputChars: JSON.stringify(input).length, outputChars, durationMs: Date.now() - start, success });
   }
 }
 
@@ -67,7 +71,13 @@ program.command("doctor").option("--repo <repo>", ".").action(async (opts) => {
 
 program.command("index").option("--repo <repo>", ".").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  const result = await measured(repoRoot, "index", opts, () => buildIndex(repoRoot));
+  const result = await measured(
+    repoRoot,
+    "index",
+    opts,
+    () => buildIndex(repoRoot),
+    (indexed) => ({ summary: `Indexed ${indexed.stats.fileCount} files.`, indexPath: path.join(stateDir(repoRoot), "index.json"), stats: indexed.stats })
+  );
   print({ summary: `Indexed ${result.stats.fileCount} files.`, indexPath: path.join(stateDir(repoRoot), "index.json"), stats: result.stats });
 });
 
@@ -96,6 +106,11 @@ program.command("run").option("--repo <repo>", ".").option("--kind <kind>", "gen
 program.command("diff").option("--repo <repo>", ".").option("--staged").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
   print(await measured(repoRoot, "diff", opts, () => gitDiffSummary(repoRoot, !!opts.staged)));
+});
+
+program.command("compare-cost").option("--repo <repo>", ".").option("--base <ref>", "HEAD~1").option("--head <ref>", "HEAD").action(async (opts) => {
+  const repoRoot = resolveRepo(opts.repo);
+  print(await measured(repoRoot, "compare-cost", opts, () => compareCost(repoRoot, opts.base, opts.head)));
 });
 
 program.command("budget").option("--repo <repo>", ".").action((opts) => print(budgetReport(resolveRepo(opts.repo))));
