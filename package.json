@@ -1,6 +1,6 @@
 {
   "name": "frontload",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first context and cost gateway for AI coding agents.",
   "type": "module",
   "packageManager": "pnpm@10.14.0",
@@ -46,5 +46,23 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/psjostrom/frontload",
+  "bugs": {
+    "url": "https://github.com/psjostrom/frontload/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/psjostrom/frontload.git"
+  },
+  "keywords": [
+    "coding-agent",
+    "mcp",
+    "context",
+    "tokens",
+    "budget",
+    "codex",
+    "claude"
+  ]
 }
