@@ -7,13 +7,16 @@ import { spawn } from "node:child_process";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const cli = resolve(repoRoot, "dist/src/cli/index.js");
+const configuredCli = process.env.AGENT_BUDGET_CLI;
 
-if (!existsSync(cli)) {
-  console.error(`Agent Budget is not built. Run "pnpm build" in ${repoRoot}.`);
-  process.exit(1);
-}
+const command = configuredCli?.endsWith(".js") ? process.execPath : configuredCli ?? (existsSync(cli) ? process.execPath : "agent-budget");
+const args = configuredCli
+  ? [...(configuredCli.endsWith(".js") ? [configuredCli] : []), "mcp", ...process.argv.slice(2)]
+  : existsSync(cli)
+    ? [cli, "mcp", ...process.argv.slice(2)]
+    : ["mcp", ...process.argv.slice(2)];
 
-const child = spawn(process.execPath, [cli, "mcp", ...process.argv.slice(2)], {
+const child = spawn(command, args, {
   stdio: "inherit",
   cwd: repoRoot
 });
@@ -21,4 +24,8 @@ const child = spawn(process.execPath, [cli, "mcp", ...process.argv.slice(2)], {
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 1);
+});
+child.on("error", (error) => {
+  console.error(`Failed to start Agent Budget CLI. Install it with "npm install -g agent-budget" or set AGENT_BUDGET_CLI. ${error.message}`);
+  process.exit(1);
 });

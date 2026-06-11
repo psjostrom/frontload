@@ -11,6 +11,8 @@ import { runSummary } from "../commands/run.js";
 import { generateDossier, searchIndex } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
+import { runPreToolUseHook } from "../gate/entry.js";
+import { initAll, installAgent, parseAgents } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
@@ -40,18 +42,25 @@ function print(data: unknown): void {
 const program = new Command();
 program.name("agent-budget").description("Local-first context and cost gateway for AI coding agents.").version("0.1.0");
 
-program.command("init").option("--force").action((opts) => {
-  for (const [target, source] of [
-    ["agent-budget.config.json", "agent-budget.config.example.json"],
-    ["AGENTS.md", "AGENTS.example.md"],
-    ["codex/config.toml", "codex/config.example.toml"]
-  ]) {
-    if (fs.existsSync(target) && !opts.force) continue;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(source, target);
-  }
-  print("Agent Budget files initialized.");
-});
+program
+  .command("init")
+  .option("--repo <repo>", "repository root", ".")
+  .option("--agents <agents>", "comma-separated agents to install: codex,claude,all,none", "none")
+  .option("--home <dir>", "home directory for agent plugin installation")
+  .option("--force")
+  .action((opts) => {
+    print(initAll(resolveRepo(opts.repo), parseAgents(opts.agents), opts.home ? path.resolve(opts.home) : os.homedir(), !!opts.force));
+  });
+
+program
+  .command("install")
+  .argument("<agent>", "agent to install: codex, claude, or all")
+  .option("--home <dir>", "home directory for agent plugin installation")
+  .option("--force")
+  .action((agent, opts) => {
+    if (!["codex", "claude", "all"].includes(agent)) throw new Error(`Unknown agent: ${agent}`);
+    print(installAgent(agent, opts.home ? path.resolve(opts.home) : os.homedir(), !!opts.force));
+  });
 
 program.command("doctor").option("--repo <repo>", "repository root", ".").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
@@ -116,6 +125,10 @@ program.command("compare-cost").option("--repo <repo>", "repository root", ".").
 
 program.command("budget").option("--repo <repo>", "repository root", ".").action((opts) => print(budgetReport(resolveRepo(opts.repo))));
 program.command("validate-plugins").option("--repo <repo>", "repository root", ".").action((opts) => print(validateBundledPlugins(resolveRepo(opts.repo))));
+program.command("hook").command("pre-tool-use").action(async () => {
+  const output = await runPreToolUseHook();
+  if (output) process.stdout.write(output);
+});
 program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => startMcp(resolveRepo(opts.repo)));
 program.command("proof").option("--repo <repo>", "repository root", ".").action((opts) => {
   const repoRoot = resolveRepo(opts.repo);

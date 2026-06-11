@@ -7,17 +7,24 @@ import { spawn } from "node:child_process";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const gate = resolve(repoRoot, "dist/hooks/pre-tool-use.js");
+const configuredCli = process.env.AGENT_BUDGET_CLI;
 
-if (!existsSync(gate)) {
-  console.error(`Agent Budget gate is not built. Run "pnpm build" in ${repoRoot}.`);
-  process.exit(1);
-}
+const command = configuredCli?.endsWith(".js") ? process.execPath : configuredCli ?? (existsSync(gate) ? process.execPath : "agent-budget");
+const args = configuredCli
+  ? [...(configuredCli.endsWith(".js") ? [configuredCli] : []), "hook", "pre-tool-use"]
+  : existsSync(gate)
+    ? [gate]
+    : ["hook", "pre-tool-use"];
 
-const child = spawn(process.execPath, [gate], {
+const child = spawn(command, args, {
   stdio: "inherit"
 });
 
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 0);
+});
+child.on("error", (error) => {
+  console.error(`Failed to start Agent Budget CLI. Install it with "npm install -g agent-budget" or set AGENT_BUDGET_CLI. ${error.message}`);
+  process.exit(0);
 });

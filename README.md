@@ -73,15 +73,18 @@ agent-budget
 In a target repository:
 
 ```bash
-agent-budget init
-agent-budget doctor --repo .
+npx agent-budget init --agents all
+agent-budget doctor
 agent-budget index --repo .
 agent-budget dossier "Fix stale chart tooltip value after sensor reconnect" --repo .
 agent-budget read src/chart/ChartTooltip.tsx --repo . --budget 4000
 agent-budget run --repo . --kind test -- pnpm test
 agent-budget budget --repo .
-agent-budget validate-plugins --repo .
 ```
+
+If you already installed the package globally, use `agent-budget init --agents all`.
+Use `--agents codex`, `--agents claude`, or `--agents none` to control which
+agent adapters are installed.
 
 Local state is written to `.agent-budget/` in the target repo:
 
@@ -183,16 +186,40 @@ This is the command to use when you want to prove whether the workflow actually 
 
 ```bash
 agent-budget init
+agent-budget init --agents all
+agent-budget init --agents codex,claude
 agent-budget init --force
 ```
 
-Creates starter files in the current directory:
+Creates starter files and the onboarded `.agent-budget/` state directory in the
+current repository:
 
 - `agent-budget.config.json`
 - `AGENTS.md`
 - `codex/config.toml`
+- `.agent-budget/`
 
 Without `--force`, existing files are left untouched.
+
+When `--agents` is set, `init` also installs agent adapters:
+
+- `codex`: copies the Codex plugin adapter to `~/plugins/agent-budget` and
+  adds/updates `~/.agents/plugins/marketplace.json`.
+- `claude`: copies the Claude Code plugin adapter to
+  `~/.claude/plugins/agent-budget`.
+
+### `install`
+
+```bash
+agent-budget install codex
+agent-budget install claude
+agent-budget install all
+```
+
+Installs or updates agent adapters without changing the current repository.
+Adapters are thin wrappers around the installed `agent-budget` CLI. Set
+`AGENT_BUDGET_CLI=/absolute/path/to/agent-budget` if your agent host cannot find
+the binary on `PATH`.
 
 ### `doctor`
 
@@ -387,35 +414,55 @@ See:
 
 ## Plugins
 
-This repository includes experimental plugin packages for both Codex and Claude Code:
+This repository includes plugin adapter packages for both Codex and Claude Code:
 
 ```text
 plugins/
   codex/
     .codex-plugin/plugin.json
     .mcp.json
+    bin/agent-budget-gate
     bin/agent-budget-mcp
+    hooks/hooks.json
     skills/agent-budget/SKILL.md
   claude/
     .claude-plugin/plugin.json
     .mcp.json
+    bin/agent-budget-gate
     bin/agent-budget-mcp
+    hooks/hooks.json
     skills/agent-budget/SKILL.md
 ```
 
-The shared implementation still lives in `src/`. Each plugin is a thin adapter that launches the built MCP server:
+The shared implementation still lives in the CLI runtime. Each plugin is a thin
+adapter that launches the installed `agent-budget` MCP server and hook gate.
+
+Recommended install path:
+
+```bash
+npx agent-budget init --agents all
+```
+
+Codex uses the personal marketplace written to
+`~/.agents/plugins/marketplace.json`; restart Codex, open `/plugins`, choose the
+Personal marketplace, and install or enable Agent Budget.
+
+Claude Code local test after `agent-budget install claude`:
+
+```bash
+claude --plugin-dir ~/.claude/plugins/agent-budget
+```
+
+For local development from this repository, build first and point hosts at the
+repo plugin folders:
 
 ```bash
 pnpm build
-```
-
-Claude Code local test:
-
-```bash
 claude --plugin-dir ./plugins/claude
 ```
 
-For Codex, add `plugins/codex` to a local or repo marketplace while developing. The plugin includes a manifest, skill, and MCP config. Before publishing to a marketplace, validate the current host-specific MCP path substitutions because plugin-bundled MCP path variables differ between agent hosts.
+The repo also includes `.agents/plugins/marketplace.json` for Codex marketplace
+development against `./plugins/codex`.
 
 Validate both bundled plugins with:
 

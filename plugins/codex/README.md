@@ -18,12 +18,31 @@ pnpm install
 pnpm build
 ```
 
-Then add this plugin through a local Codex marketplace or copy it into a personal plugin directory.
+Recommended user install:
+
+```bash
+agent-budget install codex
+```
+
+This copies the Codex adapter to `~/plugins/agent-budget` and adds it to the
+personal marketplace at `~/.agents/plugins/marketplace.json`. Restart Codex,
+open `/plugins`, choose the Personal marketplace, and install or enable Agent
+Budget.
+
+For local development, add this plugin through a local Codex marketplace or copy
+it into a personal plugin directory.
 
 The MCP launcher expects the built CLI at:
 
 ```text
 dist/src/cli/index.js
+```
+
+When the adapter is copied away from this repository, the launchers call the
+installed `agent-budget` binary. If the host cannot find it on `PATH`, set:
+
+```bash
+AGENT_BUDGET_CLI=/absolute/path/to/agent-budget
 ```
 
 ## Behavior
