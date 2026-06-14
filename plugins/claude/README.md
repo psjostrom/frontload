@@ -7,7 +7,6 @@ It bundles:
 - a Claude plugin manifest
 - a Frontload skill
 - an MCP server configuration
-- a launcher that starts the shared Frontload CLI MCP server
 
 ## Local Development
 
@@ -24,8 +23,9 @@ User setup:
 npx frontload init
 ```
 
-Choose Claude Code when prompted. Init copies the Claude Code adapter to
-`~/.claude/plugins/frontload`.
+Choose Claude Code when prompted. Init writes the MCP server entry to
+project `.mcp.json` by default, or `~/.claude.json` with `--scope global`.
+It also copies the skill to `~/.claude/skills/frontload`.
 
 For local development, test the repo plugin with Claude Code:
 
@@ -33,12 +33,7 @@ For local development, test the repo plugin with Claude Code:
 claude --plugin-dir ./plugins/claude
 ```
 
-When the adapter is copied away from this repository, the launchers call the
-installed `frontload` binary. If the host cannot find it on `PATH`, set:
-
-```bash
-FRONTLOAD_CLI=/absolute/path/to/frontload
-```
+The MCP config calls the global `frontload` binary directly.
 
 Inside Claude Code, use `/mcp` to verify the Frontload MCP server is connected.
 

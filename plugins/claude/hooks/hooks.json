@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/frontload-gate",
+            "command": "frontload",
+            "args": ["hook", "pre-tool-use"],
             "timeout": 10
           }
         ]

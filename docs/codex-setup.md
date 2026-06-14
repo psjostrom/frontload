@@ -1,14 +1,20 @@
 # Codex Setup
 
-Copy `codex/config.example.toml` into your Codex config and adjust the repo path if needed.
-
-Recommended workflow:
+Run init and choose Codex:
 
 ```bash
-pnpm install
-pnpm build
-frontload index --repo .
-frontload mcp --repo .
+npx frontload init --agents codex
 ```
+
+If `frontload` is not already installed globally, init prompts before running the matching global install command for your package manager. It then merges this MCP server into `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.frontload]
+command = "frontload"
+args = ["mcp", "--repo", "."]
+```
+
+Restart Codex after init. Codex reads MCP servers from its global config at startup.
+Init also copies the Frontload skill to `~/.codex/skills/frontload`.
 
 If your Codex version rejects `required`, `enabled_tools`, or `default_tools_approval_mode`, remove that key and keep the MCP command and args.

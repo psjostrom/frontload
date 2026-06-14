@@ -13,7 +13,7 @@ import { generateDossier, searchIndex } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { runPreToolUseHook } from "../gate/entry.js";
-import { initAll, parseAgents } from "../install/install.js";
+import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
@@ -43,26 +43,94 @@ function print(data: unknown): void {
 const program = new Command();
 program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version("0.1.3");
 
-async function promptAgents(): Promise<ReturnType<typeof parseAgents>> {
+function detectedAgents(homeDir: string): AgentName[] {
+  return (["codex", "claude"] as const).filter((agent) => mcpConfigAdapters[agent].detect(homeDir));
+}
+
+async function promptAgents(homeDir: string): Promise<ReturnType<typeof parseAgents>> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return parseAgents("all");
+  const detected = detectedAgents(homeDir);
+  const defaultAgents = detected.length > 0 ? detected.join(",") : "all";
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const answer = await rl.question("Which agents should Frontload configure? [all/codex/claude/none] (all): " );
-    return parseAgents(answer.trim() || "all");
+    const answer = await rl.question(`Which agents should Frontload configure? [all/codex/claude/codex,claude/none] (${defaultAgents}): ` );
+    return parseAgents(answer.trim() || defaultAgents);
   } finally {
     rl.close();
   }
+}
+
+async function promptConfigScope(): Promise<ConfigScope> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return "project";
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question("Where should Claude Code MCP config be written? [project/global] (project): ");
+    return parseConfigScope(answer.trim() || "project");
+  } finally {
+    rl.close();
+  }
+}
+
+async function promptApproveGlobalInstall(commandText: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`frontload is not installed globally. Install it now with "${commandText}"? [y/N]: `);
+    return ["y", "yes"].includes(answer.trim().toLowerCase());
+  } finally {
+    rl.close();
+  }
+}
+
+function configuresAgent(agents: Array<"codex" | "claude" | "all">, agent: "codex" | "claude"): boolean {
+  return agents.includes("all") || agents.includes(agent);
+}
+
+async function ensureGlobalFrontload(approved: boolean): Promise<GlobalInstallResult> {
+  const packageManager = detectPackageManager();
+  const install = globalInstallCommand(packageManager);
+  if (isGloballyInstalled()) {
+    return {
+      action: "skipped",
+      command: install.command,
+      args: install.args,
+      notes: ["A frontload binary is already available on PATH."]
+    };
+  }
+  const canInstall = approved || await promptApproveGlobalInstall(formatCommand(install));
+  if (!canInstall) {
+    return {
+      action: "manual",
+      command: install.command,
+      args: install.args,
+      notes: [`Install frontload globally before restarting your editor: ${formatCommand(install)}`]
+    };
+  }
+  return installGlobalFrontload(packageManager);
 }
 
 program
   .command("init")
   .option("--repo <repo>", "repository root", ".")
   .option("--agents <agents>", "comma-separated agents to configure: codex,claude,all,none")
+  .option("--scope <scope>", "Claude Code MCP config scope: project or global")
   .option("--home <dir>", "home directory for agent plugin installation")
   .option("--force")
+  .option("--yes", "approve installing frontload globally if needed")
   .action(async (opts) => {
-    const agents = opts.agents === undefined ? await promptAgents() : parseAgents(opts.agents);
-    print(initAll(resolveRepo(opts.repo), agents, opts.home ? path.resolve(opts.home) : os.homedir(), !!opts.force));
+    const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
+    const agents = opts.agents === undefined ? await promptAgents(homeDir) : parseAgents(opts.agents);
+    const scope = opts.scope === undefined && configuresAgent(agents, "claude") ? await promptConfigScope() : parseConfigScope(opts.scope);
+    const globalInstall = agents.length > 0 ? await ensureGlobalFrontload(!!opts.yes) : undefined;
+    if (globalInstall?.action === "manual") {
+      print({ summary: "Frontload was not installed globally; MCP config was not written.", globalInstall });
+      process.exitCode = 1;
+      return;
+    }
+    print({
+      globalInstall,
+      ...initAll(resolveRepo(opts.repo), agents, homeDir, !!opts.force, scope)
+    });
   });
 
 program.command("doctor").option("--repo <repo>", "repository root", ".").action(async (opts) => {

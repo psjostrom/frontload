@@ -2,7 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { initAll, initProject, parseAgents } from "../../src/install/install.js";
+import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope } from "../../src/install/install.js";
+
+function writeExecutable(dir: string, name = "frontload"): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(file, 0o755);
+  return file;
+}
 
 describe("installer", () => {
   it("initializes project files and onboarded state", () => {
@@ -11,43 +19,154 @@ describe("installer", () => {
     expect(result.map((write) => path.relative(repo, write.path))).toEqual([
       "frontload.config.json",
       "AGENTS.md",
-      "codex/config.toml",
       ".frontload"
     ]);
     expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(true);
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, "codex/config.toml"))).toBe(false);
   });
 
-  it("configures Codex from init", () => {
+  it("configures Codex MCP from init", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-"));
     const result = initAll(repo, ["codex"], home);
-    const codexConfigFile = path.join(home, ".agents/plugins/marketplace.json");
-    const codexConfig = JSON.parse(fs.readFileSync(codexConfigFile, "utf8"));
+    const codexConfigFile = path.join(home, ".codex/config.toml");
+    const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
 
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
-    expect(result.agents[0].writes.map((write) => path.relative(home, write.path))).toEqual(["plugins/frontload"]);
-    expect(fs.existsSync(path.join(home, "plugins/frontload/.codex-plugin/plugin.json"))).toBe(true);
-    expect(codexConfig.plugins).toContainEqual({
-      name: "frontload",
-      source: { source: "local", path: "./plugins/frontload" },
-      policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
-      category: "Productivity"
-    });
+    expect(result.agents[0].writes.map((write) => path.relative(home, write.path))).toEqual([
+      ".codex/config.toml",
+      ".codex/skills/frontload"
+    ]);
+    expect(codexConfig).toContain("[mcp_servers.frontload]");
+    expect(codexConfig).toContain('command = "frontload"');
+    expect(codexConfig).toContain('args = ["mcp", "--repo", "."]');
+    expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
+    expect(fs.readFileSync(path.join(home, ".codex/skills/frontload/SKILL.md"), "utf8")).toBe(
+      fs.readFileSync(path.resolve("plugins/codex/skills/frontload/SKILL.md"), "utf8")
+    );
+    expect(fs.existsSync(path.join(home, "plugins/frontload/.codex-plugin/plugin.json"))).toBe(false);
   });
 
   it("configures all supported agent adapters from init", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-all-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-all-"));
     const result = initAll(repo, ["all"], home);
+    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex", "claude"]);
-    expect(fs.existsSync(path.join(home, "plugins/frontload/.codex-plugin/plugin.json"))).toBe(true);
-    expect(fs.existsSync(path.join(home, ".claude/plugins/frontload/.claude-plugin/plugin.json"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
+    expect(claudeConfig.mcpServers.frontload).toEqual({
+      type: "stdio",
+      command: "frontload",
+      args: ["mcp", "--repo", "."]
+    });
+  });
+
+  it("can configure Claude Code globally", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-claude-global-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-claude-global-"));
+    initAll(repo, ["claude"], home, false, "global");
+    const claudeConfig = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf8"));
+
+    expect(claudeConfig.mcpServers.frontload).toEqual({
+      type: "stdio",
+      command: "frontload",
+      args: ["mcp", "--repo", "."]
+    });
+    expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
+    expect(fs.readFileSync(path.join(home, ".claude/skills/frontload/SKILL.md"), "utf8")).toBe(
+      fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
+    );
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
+  });
+
+  it("preserves existing MCP servers when writing Claude config", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-merge-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-merge-"));
+    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({ mcpServers: { existing: { command: "other" } } }, null, 2));
+    initAll(repo, ["claude"], home);
+    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+
+    expect(claudeConfig.mcpServers.existing).toEqual({ command: "other" });
+    expect(claudeConfig.mcpServers.frontload.command).toBe("frontload");
+  });
+
+  it("replaces stale Codex frontload tables without touching other servers", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-merge-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-merge-"));
+    const configFile = path.join(home, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(configFile), { recursive: true });
+    fs.writeFileSync(configFile, [
+      "[mcp_servers.other]",
+      "command = \"other\"",
+      "",
+      "[mcp_servers.frontload]",
+      "command = \"old-frontload\"",
+      "",
+      "[mcp_servers.frontload.env]",
+      "OLD = \"1\"",
+      ""
+    ].join("\n"));
+    initAll(repo, ["codex"], home);
+    const codexConfig = fs.readFileSync(configFile, "utf8");
+
+    expect(codexConfig).toContain("[mcp_servers.other]");
+    expect(codexConfig).toContain('command = "frontload"');
+    expect(codexConfig).not.toContain("old-frontload");
+    expect(codexConfig).not.toContain("[mcp_servers.frontload.env]");
   });
 
   it("parses agent lists", () => {
     expect(parseAgents("codex,claude")).toEqual(["codex", "claude"]);
     expect(parseAgents("none")).toEqual([]);
     expect(() => parseAgents("cursor")).toThrow("Unknown agent");
+  });
+
+  it("builds the portable MCP entry", () => {
+    expect(buildMcpEntry()).toEqual({ command: "frontload", args: ["mcp", "--repo", "."] });
+  });
+
+  it("parses config scope and package managers", () => {
+    expect(parseConfigScope(undefined)).toBe("project");
+    expect(parseConfigScope("global")).toBe("global");
+    expect(() => parseConfigScope("workspace")).toThrow("Unknown config scope");
+    expect(detectPackageManager("pnpm/10.14.0 npm/? node/?")).toBe("pnpm");
+    expect(globalInstallCommand("bun")).toEqual({ packageManager: "bun", command: "bun", args: ["add", "-g", "frontload"] });
+  });
+
+  it("looks past temporary npx shims when checking for global installs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-path-"));
+    const npxBin = path.join(tmp, "_npx/123/bin");
+    const localBin = path.join(tmp, "repo/node_modules/.bin");
+    const globalBin = path.join(tmp, "global/bin");
+    writeExecutable(npxBin);
+    writeExecutable(localBin);
+    writeExecutable(globalBin);
+
+    expect(isGloballyInstalled("frontload", npxBin)).toBe(false);
+    expect(isGloballyInstalled("frontload", `${npxBin}${path.delimiter}${localBin}`)).toBe(false);
+    expect(isGloballyInstalled("frontload", `${npxBin}${path.delimiter}${localBin}${path.delimiter}${globalBin}`)).toBe(true);
+  });
+
+  it("verifies frontload is on PATH after global install", () => {
+    const oldPath = process.env.PATH;
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-global-bin-"));
+    process.env.PATH = bin;
+    try {
+      const installed = installGlobalFrontload("npm", () => {
+        writeExecutable(bin);
+      });
+      expect(installed.action).toBe("installed");
+
+      fs.rmSync(path.join(bin, "frontload"), { force: true });
+      const unresolved = installGlobalFrontload("npm", () => undefined);
+      expect(unresolved.action).toBe("manual");
+      expect(unresolved.error).toContain("not found on PATH");
+    } finally {
+      process.env.PATH = oldPath;
+    }
   });
 });
