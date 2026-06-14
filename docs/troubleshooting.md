@@ -11,3 +11,9 @@ Run `frontload index --repo .` first and make the task description include concr
 ## Codex config key rejected
 
 Codex config schemas vary by version. Keep the MCP `command` and `args`, then remove optional keys such as `required` or `enabled_tools`.
+
+## MCP server missing after init
+
+Restart the editor after `frontload init`. MCP clients load server config at startup.
+
+If `/mcp` still does not show Frontload, confirm that `frontload --version` works in your shell. If it does not, run the manual global install command printed by init, such as `npm install -g frontload`.

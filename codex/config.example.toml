@@ -3,8 +3,8 @@
 hooks = true
 
 [mcp_servers.frontload]
-command = "pnpm"
-args = ["frontload", "mcp", "--repo", "."]
+command = "frontload"
+args = ["mcp", "--repo", "."]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
 enabled = true

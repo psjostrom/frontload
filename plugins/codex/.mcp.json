@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "frontload": {
-      "command": "${CODEX_PLUGIN_ROOT}/bin/frontload-mcp",
-      "args": ["--repo", "${CODEX_PROJECT_DIR:-.}"],
+      "command": "frontload",
+      "args": ["mcp", "--repo", "."],
       "startup_timeout_sec": 20,
       "tool_timeout_sec": 120,
       "enabled": true,

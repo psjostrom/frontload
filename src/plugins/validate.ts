@@ -63,6 +63,7 @@ const hooksConfigSchema = z.object({
           z.object({
             type: z.literal("command"),
             command: z.string().min(1),
+            args: z.array(z.string()).optional(),
             timeout: z.number().positive().optional(),
             statusMessage: z.string().optional()
           }).passthrough()
@@ -71,6 +72,8 @@ const hooksConfigSchema = z.object({
     )
   )
 });
+
+type HooksConfig = z.infer<typeof hooksConfigSchema>;
 
 export type PluginValidationResult = {
   summary: string;
@@ -89,11 +92,6 @@ function assertFile(file: string, label: string, checked: string[]): void {
   checked.push(file);
 }
 
-function assertExecutable(file: string): void {
-  const mode = fs.statSync(file).mode;
-  if ((mode & 0o111) === 0) throw new Error(`Launcher is not executable: ${file}`);
-}
-
 function assertSkill(file: string): void {
   const text = fs.readFileSync(file, "utf8");
   if (!text.startsWith("---\n")) throw new Error(`Skill is missing YAML frontmatter: ${file}`);
@@ -103,20 +101,27 @@ function assertSkill(file: string): void {
   if (body.length < 40) throw new Error(`Skill body is too short: ${file}`);
 }
 
+function assertFrontloadHook(config: HooksConfig, host: "codex" | "claude", file: string): void {
+  const commandHooks = Object.values(config.hooks).flatMap((groups) => groups.flatMap((group) => group.hooks));
+  const frontloadHook = host === "claude"
+    ? commandHooks.find((hook) => hook.command === "frontload" && JSON.stringify(hook.args) === JSON.stringify(["hook", "pre-tool-use"]))
+    : commandHooks.find((hook) => hook.command === "frontload hook pre-tool-use" && !hook.args);
+  if (!frontloadHook) {
+    throw new Error(`${file} must define the ${host} Frontload pre-tool-use hook command`);
+  }
+}
+
 export function validatePlugin(root: string, host: "codex" | "claude"): PluginValidationResult {
   const absRoot = path.resolve(root);
   const checked: string[] = [];
   const warnings: string[] = [];
   const manifestFile = path.join(absRoot, host === "codex" ? ".codex-plugin/plugin.json" : ".claude-plugin/plugin.json");
   const mcpFile = path.join(absRoot, ".mcp.json");
-  const launcherFile = path.join(absRoot, "bin/frontload-mcp");
-  const gateLauncherFile = path.join(absRoot, "bin/frontload-gate");
   const hooksFile = path.join(absRoot, "hooks/hooks.json");
   const skillFile = path.join(absRoot, "skills/frontload/SKILL.md");
 
   assertFile(manifestFile, `${host} plugin manifest`, checked);
   assertFile(mcpFile, "MCP config", checked);
-  assertFile(launcherFile, "MCP launcher", checked);
   assertFile(skillFile, "Frontload skill", checked);
 
   const manifest = readJson(manifestFile);
@@ -124,17 +129,18 @@ export function validatePlugin(root: string, host: "codex" | "claude"): PluginVa
   else claudePluginSchema.parse(manifest);
 
   const mcp = mcpConfigSchema.parse(readJson(mcpFile));
-  if (!mcp.mcpServers.frontload) throw new Error(`${mcpFile} must define mcpServers.frontload`);
-  if (!mcp.mcpServers.frontload.command.includes("frontload-mcp")) {
-    warnings.push("frontload MCP command does not reference the bundled launcher");
+  const frontload = mcp.mcpServers.frontload;
+  if (!frontload) throw new Error(`${mcpFile} must define mcpServers.frontload`);
+  if (frontload.command !== "frontload") {
+    warnings.push("frontload MCP command should reference the global frontload binary");
+  }
+  if (!frontload.args || frontload.args[0] !== "mcp") {
+    warnings.push("frontload MCP args should start with mcp");
   }
 
-  assertExecutable(launcherFile);
-  if (fs.existsSync(hooksFile) || fs.existsSync(gateLauncherFile)) {
+  if (fs.existsSync(hooksFile)) {
     assertFile(hooksFile, "hooks config", checked);
-    hooksConfigSchema.parse(readJson(hooksFile));
-    assertFile(gateLauncherFile, "gate launcher", checked);
-    assertExecutable(gateLauncherFile);
+    assertFrontloadHook(hooksConfigSchema.parse(readJson(hooksFile)), host, hooksFile);
   }
   assertSkill(skillFile);
 

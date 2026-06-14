@@ -1,8 +1,9 @@
 {
   "mcpServers": {
     "frontload": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/frontload-mcp",
-      "args": ["--repo", "${CLAUDE_PROJECT_DIR:-.}"],
+      "type": "stdio",
+      "command": "frontload",
+      "args": ["mcp", "--repo", "."],
       "env": {}
     }
   }

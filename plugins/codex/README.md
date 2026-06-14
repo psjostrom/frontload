@@ -7,7 +7,6 @@ It bundles:
 - a Codex plugin manifest
 - a Frontload skill
 - an MCP server configuration
-- a launcher that starts the shared Frontload CLI MCP server
 
 ## Local Development
 
@@ -24,23 +23,13 @@ User setup:
 npx frontload init
 ```
 
-Choose Codex when prompted. Init copies the Codex adapter into the expected
-home-directory location and configures it for the installed `frontload` CLI.
+Choose Codex when prompted. Init merges the Frontload MCP server into the
+expected Codex config, copies the skill to `~/.codex/skills/frontload`, and
+points MCP at the installed `frontload` CLI.
 
 For local development, build the repo and point Codex at this plugin folder.
 
-The MCP launcher expects the built CLI at:
-
-```text
-dist/src/cli/index.js
-```
-
-When the adapter is copied away from this repository, the launchers call the
-installed `frontload` binary. If the host cannot find it on `PATH`, set:
-
-```bash
-FRONTLOAD_CLI=/absolute/path/to/frontload
-```
+The MCP config calls the global `frontload` binary directly.
 
 ## Behavior
 
