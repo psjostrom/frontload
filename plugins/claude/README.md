@@ -6,7 +6,7 @@ It bundles:
 
 - a Claude plugin manifest
 - a Frontload skill
-- an MCP server configuration
+- a Frontload PreToolUse hook template
 
 ## Local Development
 
@@ -25,15 +25,14 @@ npx frontload init
 
 Choose Claude Code when prompted. Init writes the MCP server entry to
 project `.mcp.json` by default, or `~/.claude.json` with `--scope global`.
-It also copies the skill to `~/.claude/skills/frontload`.
+It also writes the gate hook to Claude settings and copies the skill to
+`~/.claude/skills/frontload`.
 
 For local development, test the repo plugin with Claude Code:
 
 ```bash
 claude --plugin-dir ./plugins/claude
 ```
-
-The MCP config calls the global `frontload` binary directly.
 
 Inside Claude Code, use `/mcp` to verify the Frontload MCP server is connected.
 
@@ -50,3 +49,5 @@ When the plugin is enabled, Claude Code can call Frontload MCP tools for:
 - budget reports
 
 The skill tells Claude to prefer those tools before broad raw exploration.
+The hook rewrites configured test/lint/typecheck commands through Frontload and
+blocks configured noisy reads or broad shell dumps.

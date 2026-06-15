@@ -55,6 +55,16 @@ export type McpConfigAdapter = {
 };
 
 type InstallRunner = (command: string, args: string[], options: { stdio: "inherit" }) => unknown;
+type JsonObject = Record<string, unknown>;
+
+const CLAUDE_HOOK_EVENT = "PreToolUse";
+const CLAUDE_HOOK_MATCHER = "Read|Bash";
+const CLAUDE_HOOK_COMMAND = {
+  type: "command",
+  command: "frontload",
+  args: ["hook", "pre-tool-use"],
+  timeout: 10
+};
 
 export function packageRoot(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
@@ -113,6 +123,10 @@ function writeJson(file: string, data: unknown): void {
 
 function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function mcpJsonServer(entry: McpEntry): Record<string, unknown> {
@@ -241,6 +255,45 @@ function removeCodexMcpServer(file: string): boolean {
 function hasCodexMcpServer(file: string): boolean {
   if (!fs.existsSync(file)) return false;
   return fs.readFileSync(file, "utf8").split(/\r?\n/).some((line) => line.trim() === "[mcp_servers.frontload]");
+}
+
+function claudeSettingsPath(repoRoot: string, homeDir: string, scope: ConfigScope): string {
+  return scope === "global" ? path.join(homeDir, ".claude/settings.json") : path.join(repoRoot, ".claude/settings.json");
+}
+
+function isFrontloadHook(hook: unknown): boolean {
+  if (!isJsonObject(hook)) return false;
+  return hook.command === CLAUDE_HOOK_COMMAND.command && sameJson(hook.args, CLAUDE_HOOK_COMMAND.args);
+}
+
+function withoutFrontloadHook(group: unknown): JsonObject | null {
+  if (!isJsonObject(group)) return null;
+  if (!Array.isArray(group.hooks)) return group;
+  const hooks = group.hooks.filter((hook) => !isFrontloadHook(hook));
+  if (hooks.length === 0) return null;
+  return { ...group, hooks };
+}
+
+function upsertClaudeGateHook(file: string, force: boolean): WriteResult {
+  const existed = fs.existsSync(file);
+  const current = readJson<JsonObject>(file, {});
+  const hooks = isJsonObject(current.hooks) ? current.hooks : {};
+  const preToolUse = Array.isArray(hooks[CLAUDE_HOOK_EVENT]) ? hooks[CLAUDE_HOOK_EVENT] : [];
+  const nextPreToolUse = preToolUse
+    .map(withoutFrontloadHook)
+    .filter((group): group is JsonObject => group !== null)
+    .concat([{ matcher: CLAUDE_HOOK_MATCHER, hooks: [CLAUDE_HOOK_COMMAND] }]);
+  const next = {
+    ...current,
+    hooks: {
+      ...hooks,
+      [CLAUDE_HOOK_EVENT]: nextPreToolUse
+    }
+  };
+
+  if (!force && sameJson(current, next)) return { path: file, action: "skipped" };
+  writeJson(file, next);
+  return { path: file, action: existed ? "updated" : "created" };
 }
 
 export function buildMcpEntry(): McpEntry {
@@ -398,12 +451,15 @@ function configureCodex(homeDir = os.homedir(), force = false): InstallResult {
 function configureClaude(repoRoot: string, homeDir = os.homedir(), force = false, scope: ConfigScope = "project"): InstallResult {
   const configPath = scope === "global" ? mcpConfigAdapters.claude.globalPath(homeDir) : mcpConfigAdapters.claude.projectPath(repoRoot);
   if (!configPath) throw new Error(`Claude Code does not support ${scope} MCP config from init.`);
-  const writes = [mcpConfigAdapters.claude.write(configPath, buildMcpEntry(), force)];
+  const writes = [
+    mcpConfigAdapters.claude.write(configPath, buildMcpEntry(), force),
+    upsertClaudeGateHook(claudeSettingsPath(repoRoot, homeDir, scope), force)
+  ];
   copyFrontloadSkill("claude", homeDir, force, writes);
   return {
     agent: "claude",
     writes,
-    notes: ["Restart Claude Code after init completes; /mcp should show the frontload server."]
+    notes: ["Restart Claude Code after init completes; /mcp should show the frontload server and the Frontload gate hook will enforce configured savings."]
   };
 }
 

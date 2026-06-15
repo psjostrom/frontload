@@ -58,11 +58,25 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(true);
     expect(claudeConfig.mcpServers.frontload).toEqual({
       type: "stdio",
       command: "frontload",
       args: ["mcp", "--repo", "."]
     });
+    expect(JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8")).hooks.PreToolUse).toEqual([
+      {
+        matcher: "Read|Bash",
+        hooks: [
+          {
+            type: "command",
+            command: "frontload",
+            args: ["hook", "pre-tool-use"],
+            timeout: 10
+          }
+        ]
+      }
+    ]);
   });
 
   it("can configure Claude Code globally", () => {
@@ -80,18 +94,55 @@ describe("installer", () => {
     expect(fs.readFileSync(path.join(home, ".claude/skills/frontload/SKILL.md"), "utf8")).toBe(
       fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
     );
+    expect(JSON.parse(fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8")).hooks.PreToolUse[0].hooks[0].command).toBe("frontload");
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
   });
 
-  it("preserves existing MCP servers when writing Claude config", () => {
+  it("preserves existing Claude MCP servers and hooks", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-merge-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-merge-"));
     fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({ mcpServers: { existing: { command: "other" } } }, null, 2));
+    fs.mkdirSync(path.join(repo, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".claude/settings.json"), JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Write",
+            hooks: [{ type: "command", command: "other-hook" }]
+          },
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "frontload", args: ["hook", "pre-tool-use"], timeout: 3 }]
+          }
+        ],
+        PostToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "post-hook" }]
+          }
+        ]
+      }
+    }, null, 2));
     initAll(repo, ["claude"], home);
     const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+    const claudeSettings = JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8"));
 
     expect(claudeConfig.mcpServers.existing).toEqual({ command: "other" });
     expect(claudeConfig.mcpServers.frontload.command).toBe("frontload");
+    expect(claudeSettings.hooks.PostToolUse[0].hooks[0].command).toBe("post-hook");
+    expect(claudeSettings.hooks.PreToolUse).toHaveLength(2);
+    expect(claudeSettings.hooks.PreToolUse[0].hooks[0].command).toBe("other-hook");
+    expect(claudeSettings.hooks.PreToolUse[1]).toEqual({
+      matcher: "Read|Bash",
+      hooks: [
+        {
+          type: "command",
+          command: "frontload",
+          args: ["hook", "pre-tool-use"],
+          timeout: 10
+        }
+      ]
+    });
   });
 
   it("replaces stale Codex frontload tables without touching other servers", () => {
