@@ -18,7 +18,6 @@ const codexPluginSchema = z.object({
   license: z.string().min(1).optional(),
   keywords: z.array(z.string()).optional(),
   skills: z.string().startsWith("./"),
-  mcpServers: z.string().startsWith("./"),
   interface: z.object({
     displayName: z.string().min(1),
     shortDescription: z.string().min(1),
@@ -32,7 +31,7 @@ const codexPluginSchema = z.object({
     defaultPrompt: z.array(z.string().max(128)).max(3).optional(),
     brandColor: z.string().optional()
   })
-});
+}).strict();
 
 const claudePluginSchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
@@ -42,17 +41,7 @@ const claudePluginSchema = z.object({
   homepage: z.string().url().optional(),
   repository: z.string().url().optional(),
   license: z.string().min(1).optional()
-});
-
-const mcpServerSchema = z.object({
-  command: z.string().min(1),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional()
-}).passthrough();
-
-const mcpConfigSchema = z.object({
-  mcpServers: z.record(mcpServerSchema)
-});
+}).strict();
 
 const hooksConfigSchema = z.object({
   hooks: z.record(
@@ -116,27 +105,15 @@ export function validatePlugin(root: string, host: "codex" | "claude"): PluginVa
   const checked: string[] = [];
   const warnings: string[] = [];
   const manifestFile = path.join(absRoot, host === "codex" ? ".codex-plugin/plugin.json" : ".claude-plugin/plugin.json");
-  const mcpFile = path.join(absRoot, ".mcp.json");
   const hooksFile = path.join(absRoot, "hooks/hooks.json");
   const skillFile = path.join(absRoot, "skills/frontload/SKILL.md");
 
   assertFile(manifestFile, `${host} plugin manifest`, checked);
-  assertFile(mcpFile, "MCP config", checked);
   assertFile(skillFile, "Frontload skill", checked);
 
   const manifest = readJson(manifestFile);
   if (host === "codex") codexPluginSchema.parse(manifest);
   else claudePluginSchema.parse(manifest);
-
-  const mcp = mcpConfigSchema.parse(readJson(mcpFile));
-  const frontload = mcp.mcpServers.frontload;
-  if (!frontload) throw new Error(`${mcpFile} must define mcpServers.frontload`);
-  if (frontload.command !== "frontload") {
-    warnings.push("frontload MCP command should reference the global frontload binary");
-  }
-  if (!frontload.args || frontload.args[0] !== "mcp") {
-    warnings.push("frontload MCP args should start with mcp");
-  }
 
   if (fs.existsSync(hooksFile)) {
     assertFile(hooksFile, "hooks config", checked);

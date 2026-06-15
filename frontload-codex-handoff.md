@@ -177,16 +177,18 @@ Before implementing MCP, verify the current official TypeScript MCP SDK package/
 
 The original spec mentions `@modelcontextprotocol/sdk`, but current examples may use imports from newer package paths such as `@modelcontextprotocol/server` and `@modelcontextprotocol/server/stdio`. Use the current official package/import style that installs, builds, and passes tests. Document the exact package/import choice in `docs/mcp-tools.md`.
 
-In `codex/config.example.toml`, include:
+In `docs/codex-setup.md`, document the global Codex config written by
+`frontload init --agents codex`:
 
-- `features.hooks = true`, if supported by the current Codex version
-- an MCP server config with `required = true`, if supported by the current Codex version
+- an MCP server config in `~/.codex/config.toml`
 - `enabled_tools` listing only the Frontload tools, if supported by the current Codex version
 - `default_tools_approval_mode = "auto"` or `"prompt"`, with a documented recommendation
 
 If any of these Codex config keys are unsupported in the installed/current Codex version, document the mismatch and provide the closest working config.
 
-The project must still work if hooks are unavailable or disabled. Hooks are enforcement; the MCP tools and CLI are the core product.
+The project must still work if hooks are unavailable or disabled. Claude Code
+hooks are the current enforced path; Codex setup is MCP plus skill guidance until
+a Codex-native hook installer is implemented.
 
 ## Required CLI
 
@@ -218,8 +220,8 @@ frontload mcp --repo .
 
 ```text
 frontload.config.json
-codex/config.example.toml
-AGENTS.example.md
+AGENTS.md
+.frontload/
 ```
 
 It must not overwrite existing files unless `--force` is passed.
@@ -748,27 +750,23 @@ This lets users plug in Ollama or another local model later without making v0.1 
 
 ## Codex integration
 
-The artifact must include Codex setup files.
+The artifact must include Codex setup docs and skills.
 
-### `codex/config.example.toml`
+### `docs/codex-setup.md`
 
-Must include a working MCP stdio server example.
+Must document the working MCP stdio server entry that `frontload init` merges
+into `~/.codex/config.toml`.
 
 Preferred shape:
 
 ```toml
-# Enable hooks if supported by your Codex version.
-[features]
-hooks = true
-
 [mcp_servers.frontload]
-command = "pnpm"
-args = ["frontload", "mcp", "--repo", "."]
+command = "frontload"
+args = ["mcp", "--repo", "."]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
 enabled = true
-# If supported by current Codex version:
-required = true
+required = false
 enabled_tools = [
   "fl_policy",
   "fl_repo_index",
@@ -783,18 +781,9 @@ enabled_tools = [
 default_tools_approval_mode = "prompt"
 ```
 
-Also include a safer alternative for globally installed binary:
-
-```toml
-[mcp_servers.frontload_global]
-command = "frontload"
-args = ["mcp", "--repo", "."]
-startup_timeout_sec = 20
-tool_timeout_sec = 120
-enabled = false
-```
-
-If any keys are unsupported by the current Codex version, document that clearly and provide a working config.
+If any keys are unsupported by the current Codex version, document that clearly
+and provide a working config. Also state that Codex setup is currently advisory:
+the installer writes MCP and skill guidance, not a hard PreToolUse gate.
 
 ### `AGENTS.example.md`
 

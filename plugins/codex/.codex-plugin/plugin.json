@@ -10,7 +10,6 @@
   "license": "MIT",
   "keywords": ["coding-agent", "mcp", "context", "tokens", "budget"],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Frontload",
     "shortDescription": "Reduce coding-agent context waste with dossiers, budgeted reads, and summarized logs.",

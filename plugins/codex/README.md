@@ -6,7 +6,7 @@ It bundles:
 
 - a Codex plugin manifest
 - a Frontload skill
-- an MCP server configuration
+- a Frontload hook template
 
 ## Local Development
 
@@ -29,8 +29,6 @@ points MCP at the installed `frontload` CLI.
 
 For local development, build the repo and point Codex at this plugin folder.
 
-The MCP config calls the global `frontload` binary directly.
-
 ## Behavior
 
 When the plugin is enabled, Codex can call Frontload MCP tools for:
@@ -44,3 +42,5 @@ When the plugin is enabled, Codex can call Frontload MCP tools for:
 - budget reports
 
 The skill tells Codex to prefer those tools before broad raw exploration.
+Codex setup is currently MCP plus skill guidance; hard enforcement depends on
+Codex hook support and is not installed by `frontload init`.

@@ -202,7 +202,7 @@ Without `--force`, existing files are left untouched.
 `init` then asks which agent adapters to configure:
 
 - `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml` and copies the Frontload skill to `~/.codex/skills/frontload`.
-- `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, and copies the Frontload skill to `~/.claude/skills/frontload`.
+- `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes the Frontload PreToolUse hook to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
 
 If `frontload` is not already installed globally, `init` prompts before running
 the package-manager-specific global install command. Restart the editor after
@@ -292,7 +292,7 @@ Token estimates use `chars / 4`. Treat them as directional, not billing-grade.
 frontload validate-plugins --repo .
 ```
 
-Validates the bundled Codex and Claude plugin packages with the project's TypeScript/Zod schemas. This checks manifests, MCP config, hooks, and skill files without requiring Python.
+Validates the bundled Codex and Claude plugin packages with the project's TypeScript/Zod schemas. This checks manifests, hooks, and skill files without requiring Python.
 
 ### `mcp`
 
@@ -396,7 +396,6 @@ See:
 
 - `docs/codex-setup.md`
 - `docs/mcp-tools.md`
-- `codex/config.example.toml`
 - `skills/frontload/SKILL.md`
 
 ## Plugins
@@ -407,19 +406,17 @@ This repository includes plugin adapter packages for both Codex and Claude Code:
 plugins/
   codex/
     .codex-plugin/plugin.json
-    .mcp.json
     hooks/hooks.json
     skills/frontload/SKILL.md
   claude/
     .claude-plugin/plugin.json
-    .mcp.json
     hooks/hooks.json
     skills/frontload/SKILL.md
 ```
 
-The shared implementation lives in the CLI runtime. The bundled plugin configs
-reference the global `frontload` binary directly instead of path-sensitive
-launchers.
+The shared implementation lives in the CLI runtime. Plugin folders carry skills
+and hook templates only; MCP registration is written by `frontload init` into
+the real editor config files.
 
 Recommended setup path:
 
@@ -428,8 +425,9 @@ npx frontload init
 ```
 
 The init command asks whether to configure Codex, Claude Code, both, or neither.
-It writes each editor's real MCP config and is the supported user setup path for
-agent adapters.
+It writes each editor's real MCP config. For Claude Code it also writes the
+Frontload gate hook into Claude settings. This is the supported user setup path
+for agent adapters.
 
 For local development from this repository, build first and point hosts at the
 repo plugin folders:
