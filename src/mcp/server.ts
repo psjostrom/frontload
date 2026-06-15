@@ -15,7 +15,7 @@ function json(data: unknown) {
 }
 
 export async function startMcp(repoRoot: string): Promise<void> {
-  const server = new McpServer({ name: "frontload", version: "0.1.3" });
+  const server = new McpServer({ name: "frontload", version: "0.1.4" });
   server.tool("fl_policy", "Return current budget and command policy. Use before running costly commands; do not use for source exploration.", {}, async () => {
     const config = loadConfig(repoRoot);
     return json({ summary: "Current Frontload policy.", budgets: config.budgets, allowedCommands: config.commands.allowed, localScout: config.localScout });
