@@ -6,19 +6,37 @@ import { CommandSummary, Finding } from "../types.js";
 import { nowStamp, stateDir } from "../utils/path.js";
 import { capText, redactSecrets } from "../utils/text.js";
 
-function parseFindings(output: string): Finding[] {
-  const findings: Finding[] = [];
+function pushUnique(findings: Finding[], finding: Finding): void {
+  const key = `${finding.severity}:${finding.file ?? ""}:${finding.line ?? ""}:${finding.column ?? ""}:${finding.title}`;
+  const exists = findings.some((existing) => `${existing.severity}:${existing.file ?? ""}:${existing.line ?? ""}:${existing.column ?? ""}:${existing.title}` === key);
+  if (!exists) findings.push(finding);
+}
+
+function boundedTail(output: string, maxLines = 40, maxChars = 4000): string {
+  const lines = output.trimEnd().split(/\r?\n/).filter((line) => line.trim());
+  const tail = lines.slice(-maxLines).join("\n");
+  return capText(tail, maxChars).text;
+}
+
+function displayCommand(command: string): string {
+  return capText(command.replace(/\s+/g, " "), 300).text;
+}
+
+function parseTypeScriptFindings(output: string, findings: Finding[]): void {
   const ts1 = /(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)/g;
   const ts2 = /(.+?):(\d+):(\d+) - error (TS\d+): (.+)/g;
   for (const re of [ts1, ts2]) {
     for (const m of output.matchAll(re)) {
-      findings.push({ severity: "error", file: m[1], line: Number(m[2]), column: Number(m[3]), title: `${m[4]}: ${m[5]}` });
+      pushUnique(findings, { severity: "error", file: m[1], line: Number(m[2]), column: Number(m[3]), title: `${m[4]}: ${m[5]}` });
     }
   }
+}
+
+function parseVitestFindings(output: string, findings: Finding[]): void {
   const failFile = output.match(/FAIL\s+([^\s]+)/);
   const testName = output.match(/(?:x|\u00d7|\u2715)\s+(.+?)\s+\d+ms|test\(["'](.+?)["']/);
   if (failFile || testName) {
-    findings.push({
+    pushUnique(findings, {
       severity: "error",
       file: failFile?.[1],
       title: testName?.[1] ?? testName?.[2] ?? "Failing test",
@@ -26,12 +44,78 @@ function parseFindings(output: string): Finding[] {
       stack: output.match(/\s+at .+:\d+:\d+/g)?.slice(0, 8).map((s) => s.trim())
     });
   }
+}
+
+function parseGradleDetektFindings(output: string, findings: Finding[]): void {
+  const detekt = /^(.+?\.(?:kt|kts|java)):(\d+):(\d+):\s*(.+?)(?:\s+\[(.+?)])?$/gm;
+  for (const m of output.matchAll(detekt)) {
+    pushUnique(findings, {
+      severity: /warning/i.test(m[4]) ? "warning" : "error",
+      file: m[1],
+      line: Number(m[2]),
+      column: Number(m[3]),
+      title: m[5] ? `${m[5]}: ${m[4]}` : m[4]
+    });
+  }
+
+  const failedTask = output.match(/>\s*Task\s+(:[^\s]+)\s+FAILED/);
+  const whatWentWrong = output.match(/\* What went wrong:\s*\n([\s\S]*?)(?:\n\* Try:|\n\* Exception is:|$)/);
+  if (failedTask || whatWentWrong) {
+    pushUnique(findings, {
+      severity: "error",
+      title: failedTask ? `Gradle task failed: ${failedTask[1]}` : "Gradle build failed",
+      detail: whatWentWrong ? capText(whatWentWrong[1].trim(), 2000).text : undefined
+    });
+  }
+}
+
+function parseRustFindings(output: string, findings: Finding[]): void {
+  const rustError = /error(?:\[(E\d+)])?:\s*(.+?)\n\s*-->\s*(.+?):(\d+):(\d+)/g;
+  for (const m of output.matchAll(rustError)) {
+    pushUnique(findings, {
+      severity: "error",
+      file: m[3],
+      line: Number(m[4]),
+      column: Number(m[5]),
+      title: m[1] ? `${m[1]}: ${m[2]}` : m[2]
+    });
+  }
+
+  const panic = /thread '(.+?)' panicked at (.+?),\s*(.+?):(\d+):(\d+)/g;
+  for (const m of output.matchAll(panic)) {
+    pushUnique(findings, {
+      severity: "error",
+      file: m[3],
+      line: Number(m[4]),
+      column: Number(m[5]),
+      title: `Rust panic in ${m[1]}: ${m[2]}`
+    });
+  }
+}
+
+function parseGenericFindings(output: string, findings: Finding[]): void {
+  const lines = output.split(/\r?\n/);
+  lines.forEach((line, i) => {
+    if (/error|failed|FAIL|AssertionError|Expected|Received/i.test(line)) {
+      pushUnique(findings, { severity: /warn/i.test(line) ? "warning" : "error", title: line.trim(), detail: lines.slice(Math.max(0, i - 2), i + 3).join("\n") });
+    }
+  });
+}
+
+function parseFindings(output: string, exitCode: number | null): Finding[] {
+  const findings: Finding[] = [];
+  parseTypeScriptFindings(output, findings);
+  parseVitestFindings(output, findings);
+  parseGradleDetektFindings(output, findings);
+  parseRustFindings(output, findings);
   if (!findings.length) {
-    const lines = output.split(/\r?\n/);
-    lines.forEach((line, i) => {
-      if (/error|failed|FAIL|AssertionError|Expected|Received/i.test(line)) {
-        findings.push({ severity: /warn/i.test(line) ? "warning" : "error", title: line.trim(), detail: lines.slice(Math.max(0, i - 2), i + 3).join("\n") });
-      }
+    parseGenericFindings(output, findings);
+  }
+  if (!findings.length && exitCode !== 0 && output.trim()) {
+    findings.push({
+      severity: "error",
+      title: "Unrecognized failing output; showing bounded tail",
+      detail: boundedTail(output)
     });
   }
   return findings.slice(0, 30);
@@ -117,9 +201,9 @@ export async function runSummary(repoRoot: string, kind: CommandSummary["kind"],
   if (rawOutputBytes > config.budgets.maxRawLogBytes) raw = raw.slice(0, config.budgets.maxRawLogBytes);
   fs.writeFileSync(fullLogPath, raw);
   const redacted = redactSecrets(raw);
-  const findings = parseFindings(redacted.text);
+  const findings = parseFindings(redacted.text, exitCode);
   const readable = [
-    `Command: ${command}`,
+    `Command: ${displayCommand(command)}`,
     `Exit code: ${exitCode}`,
     `Duration: ${Date.now() - start}ms`,
     `Raw log: ${fullLogPath}`,

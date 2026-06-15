@@ -47,8 +47,12 @@ export async function runPreToolUseHook(rawInput?: string): Promise<string | nul
     if (!config.gate.enabled) return null;
 
     const cli = path.join(distRoot(), "src/cli/index.js");
-    const runnerCommand = `${shellQuote(process.execPath)} ${shellQuote(cli)} run --repo ${shellQuote(root)}`;
-    const decision = evaluate(payload, config, { runnerCommand });
+    const frontloadCommand = `${shellQuote(process.execPath)} ${shellQuote(cli)}`;
+    const decision = evaluate(payload, config, {
+      runnerCommand: `${frontloadCommand} run --repo ${shellQuote(root)}`,
+      searchCommand: `${frontloadCommand} search --repo ${shellQuote(root)}`,
+      readCommand: `${frontloadCommand} read --repo ${shellQuote(root)}`
+    });
     return decision ? JSON.stringify(decision) : null;
   } catch {
     return null;
