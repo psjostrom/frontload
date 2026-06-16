@@ -1,9 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
 import { buildIndex, loadIndex } from "../indexer/indexer.js";
 import { IndexedFile, RepoIndex } from "../types.js";
 import { fileCategory } from "../diff/diff.js";
-import { capText, words } from "../utils/text.js";
+import { capText, redactSecrets, words } from "../utils/text.js";
 
-type Ranked = { file: IndexedFile; score: number; why: string[]; relatedTests: string[] };
+type SearchMatch = { line: number; text: string };
+type Ranked = { file: IndexedFile; score: number; why: string[]; relatedTests: string[]; matches?: SearchMatch[] };
 
 const genericTaskWords = new Set([
   "app",
@@ -52,6 +55,12 @@ function categoryPenalty(file: IndexedFile, taskWords: string[]): { penalty: num
   return { penalty: 0 };
 }
 
+function relatedTestsFor(file: IndexedFile, index: RepoIndex): string[] {
+  return index.files
+    .filter((f) => f.isTest && (f.path.includes(file.path.replace(/\.[^.]+$/, "")) || f.path.includes(file.path.split("/").at(-1)!.replace(/\.[^.]+$/, ""))))
+    .map((f) => f.path);
+}
+
 function scoreFile(file: IndexedFile, taskWords: string[], index: RepoIndex): Ranked {
   let score = 0;
   const why: string[] = [];
@@ -79,9 +88,7 @@ function scoreFile(file: IndexedFile, taskWords: string[], index: RepoIndex): Ra
     why.push("import/export match");
   }
   if (file.isTest) score += taskWords.some((w) => ["test", "tests", "failing", "failure"].includes(w)) ? 8 : -4;
-  const relatedTests = index.files
-    .filter((f) => f.isTest && (f.path.includes(file.path.replace(/\.[^.]+$/, "")) || f.path.includes(file.path.split("/").at(-1)!.replace(/\.[^.]+$/, ""))))
-    .map((f) => f.path);
+  const relatedTests = relatedTestsFor(file, index);
   if (relatedTests.length) {
     score += 10;
     why.push("related test");
@@ -96,6 +103,42 @@ function scoreFile(file: IndexedFile, taskWords: string[], index: RepoIndex): Ra
   if (penalty.reason) why.push(penalty.reason);
   if (/billing|unrelated/i.test(file.path)) score -= 15;
   return { file, score, why, relatedTests };
+}
+
+function contentSignals(repoRoot: string, file: IndexedFile, query: string, queryWords: string[], maxMatches = 3): { score: number; why: string[]; matches: SearchMatch[] } {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return { score: 0, why: [], matches: [] };
+  const abs = path.resolve(repoRoot, file.path);
+  if (!fs.existsSync(abs)) return { score: 0, why: [], matches: [] };
+  let text: string;
+  try {
+    text = fs.readFileSync(abs, "utf8");
+  } catch {
+    return { score: 0, why: [], matches: [] };
+  }
+  let score = 0;
+  const matches: SearchMatch[] = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    const lower = line.toLowerCase();
+    const exact = needle.length > 1 && lower.includes(needle);
+    const termHits = queryWords.filter((word) => lower.includes(word)).length;
+    if (!exact && termHits === 0) return;
+    score += exact ? 30 : Math.min(termHits * 8, 20);
+    if (matches.length < maxMatches) {
+      matches.push({ line: i + 1, text: capText(redactSecrets(line.trim()).text, 240).text });
+    }
+  });
+  return { score, why: matches.length ? ["content match"] : [], matches };
+}
+
+function inventorySearch(index: RepoIndex, query: string, limit: number): Ranked[] {
+  const pathQuery = query.trim().replace(/^\.\//, "").replace(/\/$/, "");
+  const normalized = pathQuery === "." ? "" : pathQuery.toLowerCase();
+  return index.files
+    .filter((file) => !normalized || file.path.toLowerCase().includes(normalized))
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .slice(0, limit)
+    .map((file) => ({ file, score: 1, why: ["repo inventory"], relatedTests: relatedTestsFor(file, index) }));
 }
 
 function noiseNotes(ranked: Ranked[]): string[] {
@@ -177,8 +220,19 @@ export async function generateDossier(repoRoot: string, task: string, budgetChar
 export async function searchIndex(repoRoot: string, query: string, limit = 10): Promise<Ranked[]> {
   const index = loadIndex(repoRoot) ?? (await buildIndex(repoRoot));
   const queryWords = taskTerms(query);
+  if (!queryWords.length && /^[\w./-]+$/.test(query.trim())) return inventorySearch(index, query, limit);
   return index.files
-    .map((file) => scoreFile(file, queryWords, index))
+    .map((file) => {
+      const ranked = scoreFile(file, queryWords, index);
+      const content = contentSignals(repoRoot, file, query, queryWords);
+      return {
+        ...ranked,
+        score: ranked.score + content.score,
+        why: [...ranked.why, ...content.why],
+        ...(content.matches.length ? { matches: content.matches } : {})
+      };
+    })
+    .filter((ranked) => ranked.score > 0)
     .sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path))
     .slice(0, limit);
 }

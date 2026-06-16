@@ -32,10 +32,57 @@ describe("PreToolUse gate", () => {
     expect(evaluate({ tool_name: "Bash", tool_input: { command: "pnpm test && pnpm lint" } }, defaultConfig)).toBeNull();
   });
 
-  it("denies broad shell dumps", () => {
+  it("rewrites broad shell dumps through cheaper Frontload commands", () => {
     const result = evaluate({ tool_name: "Bash", tool_input: { command: "find ." } }, defaultConfig);
+    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search '.' --limit 50");
+  });
+
+  it("rewrites recursive grep with the searched pattern", () => {
+    const result = evaluate({ tool_name: "Bash", tool_input: { command: "grep -rn \"stale tooltip\" ." } }, defaultConfig, {
+      searchCommand: "node dist/src/cli/index.js search --repo /tmp/repo"
+    });
+    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("node dist/src/cli/index.js search --repo /tmp/repo 'stale tooltip' --limit 20");
+  });
+
+  it("denies recursive grep with include filters because search cannot preserve them", () => {
+    const result = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R --include '*.ts' -n \"stale tooltip\" ." } }, defaultConfig);
     expect(result?.hookSpecificOutput.permissionDecision).toBe("deny");
-    expect(result?.hookSpecificOutput.permissionDecisionReason).toContain("fl_search");
+    expect(result?.hookSpecificOutput.permissionDecisionReason).toContain("--include option");
+  });
+
+  it("handles long grep flags without treating them as patterns", () => {
+    const result = evaluate({ tool_name: "Bash", tool_input: { command: "grep --recursive --line-number \"stale tooltip\" ." } }, defaultConfig);
+    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search 'stale tooltip' --limit 20");
+  });
+
+  it("denies recursive grep when it cannot be rewritten safely", () => {
+    const result = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -f patterns.txt ." } }, defaultConfig);
+    expect(result?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(result?.hookSpecificOutput.permissionDecisionReason).toContain("pattern file");
+  });
+
+  it("denies recursive grep with unsupported match semantics", () => {
+    const inverted = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -v \"stale tooltip\" ." } }, defaultConfig);
+    const regex = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -E \"stale.*tooltip\" ." } }, defaultConfig);
+    const context = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -C2 \"stale tooltip\" ." } }, defaultConfig);
+
+    expect(inverted?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(inverted?.hookSpecificOutput.permissionDecisionReason).toContain("-v option");
+    expect(regex?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(regex?.hookSpecificOutput.permissionDecisionReason).toContain("-E option");
+    expect(context?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(context?.hookSpecificOutput.permissionDecisionReason).toContain("-C option");
+  });
+
+  it("rewrites lockfile cat through budgeted read", () => {
+    const result = evaluate({ tool_name: "Bash", tool_input: { command: "cat pnpm-lock.yaml" } }, defaultConfig, {
+      readCommand: "frontload read --repo ."
+    });
+    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload read --repo . 'pnpm-lock.yaml' --budget 4000");
   });
 
   it("denies noisy generated and lockfile reads", () => {
