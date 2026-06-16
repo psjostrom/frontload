@@ -46,10 +46,10 @@ describe("PreToolUse gate", () => {
     expect(result?.hookSpecificOutput.updatedInput?.command).toBe("node dist/src/cli/index.js search --repo /tmp/repo 'stale tooltip' --limit 20");
   });
 
-  it("skips grep option values when extracting the searched pattern", () => {
+  it("denies recursive grep with include filters because search cannot preserve them", () => {
     const result = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R --include '*.ts' -n \"stale tooltip\" ." } }, defaultConfig);
-    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
-    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search 'stale tooltip' --limit 20");
+    expect(result?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(result?.hookSpecificOutput.permissionDecisionReason).toContain("--include option");
   });
 
   it("handles long grep flags without treating them as patterns", () => {
@@ -62,6 +62,19 @@ describe("PreToolUse gate", () => {
     const result = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -f patterns.txt ." } }, defaultConfig);
     expect(result?.hookSpecificOutput.permissionDecision).toBe("deny");
     expect(result?.hookSpecificOutput.permissionDecisionReason).toContain("pattern file");
+  });
+
+  it("denies recursive grep with unsupported match semantics", () => {
+    const inverted = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -v \"stale tooltip\" ." } }, defaultConfig);
+    const regex = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -E \"stale.*tooltip\" ." } }, defaultConfig);
+    const context = evaluate({ tool_name: "Bash", tool_input: { command: "grep -R -C2 \"stale tooltip\" ." } }, defaultConfig);
+
+    expect(inverted?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(inverted?.hookSpecificOutput.permissionDecisionReason).toContain("-v option");
+    expect(regex?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(regex?.hookSpecificOutput.permissionDecisionReason).toContain("-E option");
+    expect(context?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(context?.hookSpecificOutput.permissionDecisionReason).toContain("-C option");
   });
 
   it("rewrites lockfile cat through budgeted read", () => {

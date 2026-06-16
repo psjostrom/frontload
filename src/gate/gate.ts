@@ -87,23 +87,32 @@ type GrepAnalysis = {
   unsupported?: string;
 };
 
+const grepValueOptions = new Set([
+  "--after-context",
+  "--before-context",
+  "--binary-files",
+  "--context",
+  "--devices",
+  "--directories",
+  "--exclude",
+  "--exclude-dir",
+  "--include",
+  "--label",
+  "--max-count"
+]);
+
+const grepPatternOptions = new Set(["-e", "--regexp"]);
+const simpleGrepFlags = new Set(["r", "R", "n", "H", "h"]);
+
+function markUnsupported(analysis: GrepAnalysis, reason: string): void {
+  analysis.unsupported ??= reason;
+}
+
 function grepAnalysis(command: string): GrepAnalysis | null {
   const parts = shellWords(command);
   if (parts[0] !== "grep") return null;
   const analysis: GrepAnalysis = { recursive: false };
-  const valueOptions = new Set([
-    "--after-context",
-    "--before-context",
-    "--binary-files",
-    "--context",
-    "--devices",
-    "--directories",
-    "--exclude",
-    "--exclude-dir",
-    "--include",
-    "--label",
-    "--max-count"
-  ]);
+  let patternCount = 0;
 
   for (let i = 1; i < parts.length; i++) {
     const part = parts[i];
@@ -111,27 +120,38 @@ function grepAnalysis(command: string): GrepAnalysis | null {
       if (!analysis.pattern && parts[i + 1]) analysis.pattern = parts[i + 1];
       break;
     }
-    if (part === "-e" || part === "--regexp") {
+    if (grepPatternOptions.has(part)) {
       if (parts[i + 1]) analysis.pattern = parts[i + 1];
+      patternCount += 1;
       i += 1;
       continue;
     }
     if (part.startsWith("--regexp=")) {
       analysis.pattern = part.slice("--regexp=".length);
+      patternCount += 1;
       continue;
     }
     if (part === "-f" || part === "--file" || part.startsWith("--file=")) {
-      analysis.unsupported = "pattern file";
+      markUnsupported(analysis, "pattern file");
       if (part === "-f" || part === "--file") i += 1;
       continue;
     }
-    if (valueOptions.has(part)) {
+    if (grepValueOptions.has(part)) {
+      markUnsupported(analysis, `${part} option`);
       i += 1;
       continue;
     }
-    if (valueOptions.has(part.split("=")[0])) continue;
+    if (grepValueOptions.has(part.split("=")[0])) {
+      markUnsupported(analysis, `${part.split("=")[0]} option`);
+      continue;
+    }
     if (part.startsWith("--")) {
       if (part === "--recursive" || part === "--dereference-recursive") analysis.recursive = true;
+      else if (part === "--line-number" || part === "--with-filename" || part === "--no-filename") {
+        // Output-only flags are safe to drop because Frontload search always returns file paths and line numbers.
+      } else {
+        markUnsupported(analysis, `${part} option`);
+      }
       continue;
     }
     if (part.startsWith("-") && part !== "-") {
@@ -145,19 +165,32 @@ function grepAnalysis(command: string): GrepAnalysis | null {
           analysis.pattern = parts[i + 1];
           i += 1;
         }
+        patternCount += 1;
       }
       const f = flags.indexOf("f");
       if (f !== -1) {
-        analysis.unsupported = "pattern file";
+        markUnsupported(analysis, "pattern file");
         if (!flags.slice(f + 1)) i += 1;
       }
-      const valueFlag = flags.match(/[ABCm]$/);
-      if (valueFlag && !/\d$/.test(flags) && parts[i + 1]) i += 1;
+      const valueFlag = flags.match(/[ABCm]/);
+      if (valueFlag) {
+        markUnsupported(analysis, `-${valueFlag[0]} option`);
+        if (/[ABCm]$/.test(flags) && parts[i + 1]) i += 1;
+      }
+      for (const flag of flags) {
+        if (!simpleGrepFlags.has(flag) && flag !== "e" && flag !== "f" && !/[ABCm0-9]/.test(flag)) {
+          markUnsupported(analysis, `-${flag} option`);
+        }
+      }
       continue;
     }
-    if (!analysis.pattern) analysis.pattern = part;
+    if (!analysis.pattern) {
+      analysis.pattern = part;
+      patternCount += 1;
+    }
     break;
   }
+  if (patternCount > 1) markUnsupported(analysis, "multiple patterns");
   return analysis;
 }
 

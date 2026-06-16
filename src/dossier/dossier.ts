@@ -3,7 +3,7 @@ import path from "node:path";
 import { buildIndex, loadIndex } from "../indexer/indexer.js";
 import { IndexedFile, RepoIndex } from "../types.js";
 import { fileCategory } from "../diff/diff.js";
-import { capText, words } from "../utils/text.js";
+import { capText, redactSecrets, words } from "../utils/text.js";
 
 type SearchMatch = { line: number; text: string };
 type Ranked = { file: IndexedFile; score: number; why: string[]; relatedTests: string[]; matches?: SearchMatch[] };
@@ -125,7 +125,7 @@ function contentSignals(repoRoot: string, file: IndexedFile, query: string, quer
     if (!exact && termHits === 0) return;
     score += exact ? 30 : Math.min(termHits * 8, 20);
     if (matches.length < maxMatches) {
-      matches.push({ line: i + 1, text: capText(line.trim(), 240).text });
+      matches.push({ line: i + 1, text: capText(redactSecrets(line.trim()).text, 240).text });
     }
   });
   return { score, why: matches.length ? ["content match"] : [], matches };

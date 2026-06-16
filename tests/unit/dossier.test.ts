@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildIndex } from "../../src/indexer/indexer.js";
@@ -29,5 +31,17 @@ describe("dossier", () => {
     const match = results.find((result) => result.matches?.some((line) => line.text.includes("92 mg/dL")));
     expect(match?.file.path).toBe("src/chart/ChartTooltip.test.tsx");
     expect(match?.why).toContain("content match");
+  });
+
+  it("redacts secrets from literal content matches", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-search-redact-"));
+    fs.writeFileSync(path.join(dir, "settings.ts"), "export const api_key = \"sk-1234567890abcdefghijklmnop\";\n");
+    await buildIndex(dir);
+
+    const results = await searchIndex(dir, "api_key", 5);
+    const match = results.find((result) => result.file.path === "settings.ts");
+
+    expect(match?.matches?.[0]?.text).toContain("api_key =[REDACTED]");
+    expect(match?.matches?.[0]?.text).not.toContain("sk-1234567890abcdefghijklmnop");
   });
 });
