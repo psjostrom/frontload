@@ -38,9 +38,9 @@ export function words(input: string): string[] {
   );
 }
 
-export function lineNumbered(text: string): string {
+export function lineNumbered(text: string, startLine = 1): string {
   return text
     .split(/\r?\n/)
-    .map((line, i) => `${String(i + 1).padStart(4, " ")} | ${line}`)
+    .map((line, i) => `${String(startLine + i).padStart(4, " ")} | ${line}`)
     .join("\n");
 }
