@@ -11,7 +11,7 @@ Default workflow:
 
 1. Start with `fl_repo_dossier` for the current task.
 2. Use `fl_search` when the dossier says ranking confidence is noisy or when you need concrete symbols.
-3. Use `fl_read_budgeted` for file contents instead of raw full-file reads.
+3. Use `fl_read_budgeted` for contiguous file windows instead of raw full-file reads. Prefer the raw `excerpt` for edits when `editSafe` is true, and use `numberedExcerpt` only for line references.
 4. Run tests, typechecks, lint, and build commands through `fl_run_summary`.
 5. Use `fl_git_diff_summary` before reviewing changes.
 6. Use `fl_budget_report` before repeating repair loops.
