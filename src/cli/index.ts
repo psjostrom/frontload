@@ -173,10 +173,23 @@ program.command("search").argument("<query>").option("--repo <repo>", "repositor
   print(await measured(repoRoot, "search", { query, opts }, () => searchIndex(repoRoot, query, Number(opts.limit))));
 });
 
-program.command("read").argument("<path>").option("--repo <repo>", "repository root", ".").option("--budget <chars>", "4000").option("--query <query>").action(async (file, opts) => {
-  const repoRoot = resolveRepo(opts.repo);
-  print(await measured(repoRoot, "read", { file, opts }, () => readBudgeted(repoRoot, file, Number(opts.budget), opts.query)));
-});
+program.command("read")
+  .argument("<path>")
+  .option("--repo <repo>", "repository root", ".")
+  .option("--budget <chars>", "4000")
+  .option("--query <query>")
+  .option("--start-line <line>", "1-based start line")
+  .option("--line-count <count>", "maximum number of lines to return")
+  .action(async (file, opts) => {
+    const repoRoot = resolveRepo(opts.repo);
+    const readOptions = {
+      budgetChars: Number(opts.budget),
+      query: opts.query as string | undefined,
+      startLine: opts.startLine === undefined ? undefined : Number(opts.startLine),
+      lineCount: opts.lineCount === undefined ? undefined : Number(opts.lineCount)
+    };
+    print(await measured(repoRoot, "read", { file, opts: readOptions }, () => readBudgeted(repoRoot, file, readOptions)));
+  });
 
 program.command("run").option("--repo <repo>", "repository root", ".").option("--kind <kind>", "generic").option("--allow-unconfigured").argument("[cmd...]", "command after --").allowUnknownOption(true).allowExcessArguments(true).action(async (cmdParts: string[], opts) => {
   const repoRoot = resolveRepo(opts.repo);

@@ -23,7 +23,23 @@ export async function startMcp(repoRoot: string): Promise<void> {
   server.tool("fl_repo_index", "Build or refresh the repo index. Use before dossiers/search; not needed before every read.", { force: z.boolean().optional() }, async () => json({ summary: "Repository index refreshed.", index: await buildIndex(repoRoot) }));
   server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().default(12000), maxFiles: z.number().default(12) }, async ({ task, budgetChars, maxFiles }) => json({ summary: "Dossier generated.", ...(await generateDossier(repoRoot, task, budgetChars, maxFiles)) }));
   server.tool("fl_search", "Search indexed files by task terms and bounded literal content matches. Use instead of broad grep; not a full regex engine.", { query: z.string(), limit: z.number().default(10) }, async ({ query, limit }) => json({ summary: "Search results from index.", results: await searchIndex(repoRoot, query, limit) }));
-  server.tool("fl_read_budgeted", "Read a bounded file excerpt. Use for targeted reads; do not use for binary or unrelated files.", { path: z.string(), query: z.string().optional(), budgetChars: z.number().default(4000) }, async (input) => json(readBudgeted(repoRoot, input.path, input.budgetChars, input.query)));
+  server.tool(
+    "fl_read_budgeted",
+    "Read a contiguous, bounded file excerpt. The `excerpt` field is edit-safe when `editSafe` is true; use `numberedExcerpt` for line-number display.",
+    {
+      path: z.string(),
+      query: z.string().optional(),
+      budgetChars: z.number().default(4000),
+      startLine: z.number().int().positive().optional(),
+      lineCount: z.number().int().positive().optional()
+    },
+    async (input) => json(readBudgeted(repoRoot, input.path, {
+      budgetChars: input.budgetChars,
+      query: input.query,
+      startLine: input.startLine,
+      lineCount: input.lineCount
+    }))
+  );
   server.tool("fl_run_summary", "Run an allowed command and return a summary. Use for tests/typechecks/lint; do not use for interactive commands.", { kind: z.enum(["test", "typecheck", "lint", "generic"]).default("generic"), command: z.string() }, async ({ kind, command }) => json(await runSummary(repoRoot, kind, command.split(/\s+/))));
   server.tool("fl_git_diff_summary", "Summarize git diff. Use instead of dumping full diffs; not for applying patches.", { staged: z.boolean().default(false) }, async ({ staged }) => json(await gitDiffSummary(repoRoot, staged)));
   server.tool("fl_budget_report", "Return budget event totals. Use before/after large work; not a profiler.", {}, async () => json(budgetReport(repoRoot)));

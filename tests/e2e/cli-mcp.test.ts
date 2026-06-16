@@ -19,7 +19,7 @@ describe("e2e proof workflow", () => {
       ["fl_policy", { summary: "Current Frontload policy." }],
       ["fl_repo_index", index],
       ["fl_repo_dossier", dossier],
-      ["fl_read_budgeted", readBudgeted(fixture, "src/chart/ChartTooltip.tsx", 4000, "tooltip reconnect")],
+      ["fl_read_budgeted", readBudgeted(fixture, "src/chart/ChartTooltip.tsx", { budgetChars: 4000, query: "tooltip reconnect" })],
       ["fl_run_summary", await runSummary(fixture, "test", ["node", "-e", "console.error('FAIL src/chart/ChartTooltip.test.tsx\\nx updates stale chart tooltip value after sensor reconnect'); process.exit(1)"], true)],
       ["fl_budget_report", budgetReport(fixture)]
     ] as const;
@@ -28,6 +28,10 @@ describe("e2e proof workflow", () => {
     }
     expect(index.stats.fileCount).toBeGreaterThan(4);
     expect(dossier.markdown).toContain("ChartTooltip.tsx");
+    const read = calls.find(([tool]) => tool === "fl_read_budgeted")?.[1] as ReturnType<typeof readBudgeted>;
+    expect(read.excerpt).not.toContain("1 |");
+    expect(read.numberedExcerpt).toContain("|");
+    expect(read.editSafe).toBe(true);
     expect(fs.existsSync("proof/mcp-transcript.jsonl")).toBe(true);
   });
 });
