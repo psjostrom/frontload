@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { buildIndex, loadIndex } from "../indexer/indexer.js";
+import { loadFreshIndex } from "../indexer/indexer.js";
 import { IndexedFile, RepoIndex } from "../types.js";
 import { fileCategory } from "../diff/diff.js";
 import { capText, redactSecrets, words } from "../utils/text.js";
@@ -157,7 +157,7 @@ function noiseNotes(ranked: Ranked[]): string[] {
 }
 
 export async function generateDossier(repoRoot: string, task: string, budgetChars = 12000, maxFiles = 12): Promise<{ markdown: string; ranked: Ranked[]; truncated: boolean }> {
-  const index = loadIndex(repoRoot) ?? (await buildIndex(repoRoot));
+  const index = await loadFreshIndex(repoRoot);
   const taskWords = taskTerms(task);
   const ranked = index.files
     .map((file) => scoreFile(file, taskWords, index))
@@ -218,7 +218,7 @@ export async function generateDossier(repoRoot: string, task: string, budgetChar
 }
 
 export async function searchIndex(repoRoot: string, query: string, limit = 10): Promise<Ranked[]> {
-  const index = loadIndex(repoRoot) ?? (await buildIndex(repoRoot));
+  const index = await loadFreshIndex(repoRoot);
   const queryWords = taskTerms(query);
   if (!queryWords.length && /^[\w./-]+$/.test(query.trim())) return inventorySearch(index, query, limit);
   return index.files
