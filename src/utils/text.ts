@@ -39,8 +39,10 @@ export function words(input: string): string[] {
 }
 
 export function lineNumbered(text: string, startLine = 1): string {
-  return text
-    .split(/\r?\n/)
+  if (!text) return "";
+  const lines = text.split(/\r?\n/);
+  if (lines.at(-1) === "" && /\r?\n$/.test(text)) lines.pop();
+  return lines
     .map((line, i) => `${String(startLine + i).padStart(4, " ")} | ${line}`)
     .join("\n");
 }

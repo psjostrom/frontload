@@ -39,6 +39,7 @@ describe("budgeted read", () => {
     expect(result.excerpt).toBe(`${lines.slice(9, 13).join("\n")}\n`);
     expect(result.numberedExcerpt).toContain("  10 | export const line10 = 10;");
     expect(result.numberedExcerpt).toContain("  13 | export const line13 = 13;");
+    expect(result.numberedExcerpt).not.toContain("  14 |");
     expect(result.nextRead).toContain("--start-line 14");
     expect(result.previousRead).toContain("--start-line 6");
     expect(result.editSafe).toBe(true);
