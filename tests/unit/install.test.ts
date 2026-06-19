@@ -172,6 +172,8 @@ describe("installer", () => {
 
   it("parses agent lists", () => {
     expect(parseAgents("codex,claude")).toEqual(["codex", "claude"]);
+    expect(parseAgents("codex,codex")).toEqual(["codex"]);
+    expect(parseAgents("all,codex")).toEqual(["all"]);
     expect(parseAgents("none")).toEqual([]);
     expect(() => parseAgents("cursor")).toThrow("Unknown agent");
   });
