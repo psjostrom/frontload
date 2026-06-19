@@ -3,8 +3,10 @@ import { defaultConfig } from "../../src/config/config.js";
 import { evaluate } from "../../src/gate/gate.js";
 
 describe("hook policy", () => {
-  it("denies broad dump commands", () => {
-    expect(evaluate({ tool_name: "Bash", tool_input: { command: "find ." } }, defaultConfig)?.hookSpecificOutput.permissionDecision).toBe("deny");
+  it("rewrites broad dump commands", () => {
+    const result = evaluate({ tool_name: "Bash", tool_input: { command: "find ." } }, defaultConfig);
+    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search '.' --limit 50");
   });
 
   it("rewrites test commands", () => {
