@@ -476,7 +476,8 @@ export function parseAgents(value: string | undefined): Array<AgentName | "all">
   for (const agent of values) {
     if (!["codex", "claude", "all"].includes(agent)) throw new Error(`Unknown agent: ${agent}`);
   }
-  return values as Array<AgentName | "all">;
+  if (values.includes("all")) return ["all"];
+  return [...new Set(values)] as Array<AgentName | "all">;
 }
 
 export function parseConfigScope(value: string | undefined): ConfigScope {
