@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { execa } from "execa";
 import { budgetReport } from "../../src/budget/events.js";
 import { readBudgeted } from "../../src/commands/read.js";
 import { runSummary } from "../../src/commands/run.js";
@@ -10,6 +11,18 @@ import { buildIndex } from "../../src/indexer/indexer.js";
 const fixture = path.resolve("fixtures/react-ts-app");
 
 describe("e2e proof workflow", () => {
+  it("reports invalid read line options as CLI validation errors", async () => {
+    const result = await execa(
+      process.execPath,
+      [path.resolve("dist/src/cli/index.js"), "read", "src/chart/ChartTooltip.tsx", "--repo", fixture, "--start-line", "nope"],
+      { reject: false }
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Expected a positive integer");
+    expect(result.stderr).not.toContain("TypeError");
+  });
+
   it("calls required tool handlers and stores transcript", async () => {
     fs.mkdirSync("proof", { recursive: true });
     fs.writeFileSync("proof/mcp-transcript.jsonl", "");
@@ -19,7 +32,7 @@ describe("e2e proof workflow", () => {
       ["fl_policy", { summary: "Current Frontload policy." }],
       ["fl_repo_index", index],
       ["fl_repo_dossier", dossier],
-      ["fl_read_budgeted", readBudgeted(fixture, "src/chart/ChartTooltip.tsx", 4000, "tooltip reconnect")],
+      ["fl_read_budgeted", readBudgeted(fixture, "src/chart/ChartTooltip.tsx", { budgetChars: 4000, query: "tooltip reconnect" })],
       ["fl_run_summary", await runSummary(fixture, "test", ["node", "-e", "console.error('FAIL src/chart/ChartTooltip.test.tsx\\nx updates stale chart tooltip value after sensor reconnect'); process.exit(1)"], true)],
       ["fl_budget_report", budgetReport(fixture)]
     ] as const;
@@ -28,6 +41,10 @@ describe("e2e proof workflow", () => {
     }
     expect(index.stats.fileCount).toBeGreaterThan(4);
     expect(dossier.markdown).toContain("ChartTooltip.tsx");
+    const read = calls.find(([tool]) => tool === "fl_read_budgeted")?.[1] as ReturnType<typeof readBudgeted>;
+    expect(read.excerpt).not.toContain("1 |");
+    expect(read.numberedExcerpt).toContain("|");
+    expect(read.editSafe).toBe(true);
     expect(fs.existsSync("proof/mcp-transcript.jsonl")).toBe(true);
   });
 });

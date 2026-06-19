@@ -18,3 +18,5 @@ Tools:
 - `fl_local_scout`
 
 Each tool returns structured JSON with a human-readable `summary`.
+
+`fl_read_budgeted` returns a contiguous `excerpt` that can be used for edits when `editSafe` is true. Use `numberedExcerpt` for display and line references. Follow `nextRead` or `previousRead` to page through large files. Character budgets stop at complete-line boundaries; a single oversized line is returned intact rather than skipped or partially returned.

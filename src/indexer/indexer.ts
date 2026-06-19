@@ -69,7 +69,20 @@ function resolveImport(from: string, specifier: string, files: Map<string, Index
   return candidates.find((candidate) => files.has(candidate));
 }
 
-export async function buildIndex(repoRoot: string, config: FrontloadConfig = loadConfig(repoRoot)): Promise<RepoIndex> {
+type FileCandidate = {
+  abs: string;
+  path: string;
+  extension: string;
+  size: number;
+  mtimeMs: number;
+};
+
+type ScanResult = {
+  candidates: FileCandidate[];
+  ignoredCount: number;
+};
+
+async function scanIndexableFiles(repoRoot: string, config: FrontloadConfig): Promise<ScanResult> {
   const entries = await fg(["**/*"], {
     cwd: repoRoot,
     dot: true,
@@ -77,9 +90,8 @@ export async function buildIndex(repoRoot: string, config: FrontloadConfig = loa
     ignore: config.ignore,
     absolute: true
   });
-  const files: IndexedFile[] = [];
+  const candidates: FileCandidate[] = [];
   let ignoredCount = 0;
-  let indexedBytes = 0;
   for (const abs of entries) {
     const st = fs.statSync(abs);
     const ext = path.extname(abs);
@@ -87,24 +99,36 @@ export async function buildIndex(repoRoot: string, config: FrontloadConfig = loa
       ignoredCount += 1;
       continue;
     }
-    const text = fs.readFileSync(abs, "utf8");
-    const filePath = rel(repoRoot, abs);
-    const base = {
-      path: filePath,
+    candidates.push({
+      abs,
+      path: rel(repoRoot, abs),
       extension: ext,
       size: st.size,
-      mtimeMs: st.mtimeMs,
-      hash: hash(text),
-      lineCount: text.split(/\r?\n/).length,
-      isTest: /(^|[./_-])(test|spec)\.[jt]sx?$/.test(filePath) || /\.(test|spec)\.[jt]sx?$/.test(filePath),
-      keywords: keywords(filePath)
-    };
-    const symbols = codeExts.has(ext)
-      ? analyzeCode(filePath, text)
-      : { imports: [], exports: [], functions: [], classes: [], types: [], components: [], hooks: [], symbols: fallbackSymbols(text) };
-    indexedBytes += st.size;
-    files.push({ ...base, ...symbols });
+      mtimeMs: st.mtimeMs
+    });
   }
+  return { candidates, ignoredCount };
+}
+
+function analyzeFile(candidate: FileCandidate): IndexedFile {
+  const text = fs.readFileSync(candidate.abs, "utf8");
+  const base = {
+    path: candidate.path,
+    extension: candidate.extension,
+    size: candidate.size,
+    mtimeMs: candidate.mtimeMs,
+    hash: hash(text),
+    lineCount: text.split(/\r?\n/).length,
+    isTest: /(^|[./_-])(test|spec)\.[jt]sx?$/.test(candidate.path) || /\.(test|spec)\.[jt]sx?$/.test(candidate.path),
+    keywords: keywords(candidate.path)
+  };
+  const symbols = codeExts.has(candidate.extension)
+    ? analyzeCode(candidate.path, text)
+    : { imports: [], exports: [], functions: [], classes: [], types: [], components: [], hooks: [], symbols: fallbackSymbols(text) };
+  return { ...base, ...symbols };
+}
+
+function buildEdges(files: IndexedFile[]): DependencyEdge[] {
   const byPath = new Map(files.map((f) => [f.path, f]));
   const edges: DependencyEdge[] = [];
   for (const file of files) {
@@ -113,13 +137,17 @@ export async function buildIndex(repoRoot: string, config: FrontloadConfig = loa
       if (to) edges.push({ from: file.path, to, importPath: spec });
     }
   }
+  return edges;
+}
+
+function writeIndex(repoRoot: string, files: IndexedFile[], ignoredCount: number): RepoIndex {
   const index: RepoIndex = {
     version: 1,
     generatedAt: new Date().toISOString(),
     repoRoot,
     files,
-    edges,
-    stats: { fileCount: files.length, indexedBytes, ignoredCount }
+    edges: buildEdges(files),
+    stats: { fileCount: files.length, indexedBytes: files.reduce((sum, file) => sum + file.size, 0), ignoredCount }
   };
   fs.mkdirSync(stateDir(repoRoot), { recursive: true });
   const out = path.join(stateDir(repoRoot), "index.json");
@@ -127,6 +155,11 @@ export async function buildIndex(repoRoot: string, config: FrontloadConfig = loa
   fs.writeFileSync(tmp, JSON.stringify(index, null, 2));
   fs.renameSync(tmp, out);
   return index;
+}
+
+export async function buildIndex(repoRoot: string, config: FrontloadConfig = loadConfig(repoRoot)): Promise<RepoIndex> {
+  const scan = await scanIndexableFiles(repoRoot, config);
+  return writeIndex(repoRoot, scan.candidates.map(analyzeFile), scan.ignoredCount);
 }
 
 export function loadIndex(repoRoot: string): RepoIndex | undefined {
@@ -137,4 +170,22 @@ export function loadIndex(repoRoot: string): RepoIndex | undefined {
   } catch {
     return undefined;
   }
+}
+
+export async function loadFreshIndex(repoRoot: string, config: FrontloadConfig = loadConfig(repoRoot)): Promise<RepoIndex> {
+  const existing = loadIndex(repoRoot);
+  if (!existing) return buildIndex(repoRoot, config);
+
+  const scan = await scanIndexableFiles(repoRoot, config);
+  const existingByPath = new Map(existing.files.map((file) => [file.path, file]));
+  let changed = existing.files.length !== scan.candidates.length;
+  const files = scan.candidates.map((candidate) => {
+    const previous = existingByPath.get(candidate.path);
+    if (previous && previous.size === candidate.size && previous.mtimeMs === candidate.mtimeMs) return previous;
+    changed = true;
+    return analyzeFile(candidate);
+  });
+
+  if (!changed) return existing;
+  return writeIndex(repoRoot, files, scan.ignoredCount);
 }

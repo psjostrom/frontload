@@ -44,4 +44,30 @@ describe("dossier", () => {
     expect(match?.matches?.[0]?.text).toContain("api_key =[REDACTED]");
     expect(match?.matches?.[0]?.text).not.toContain("sk-1234567890abcdefghijklmnop");
   });
+
+  it("searchIndex sees symbols added after the last explicit index build", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-search-fresh-symbol-"));
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "src/sample.ts"), "export function oldThing() { return 1; }\n");
+    await buildIndex(dir);
+
+    fs.writeFileSync(path.join(dir, "src/sample.ts"), "export function newThing() { return 2; }\n");
+    const results = await searchIndex(dir, "newThing", 5);
+
+    expect(results[0]?.file.path).toBe("src/sample.ts");
+    expect(results[0]?.file.symbols).toContain("newThing");
+    expect(results[0]?.file.symbols).not.toContain("oldThing");
+  });
+
+  it("searchIndex sees files added after the last explicit index build", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-search-fresh-file-"));
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "src/old.ts"), "export const oldThing = 1;\n");
+    await buildIndex(dir);
+
+    fs.writeFileSync(path.join(dir, "src/new.ts"), "export const brandNewNeedle = 2;\n");
+    const results = await searchIndex(dir, "brandNewNeedle", 5);
+
+    expect(results.some((result) => result.file.path === "src/new.ts")).toBe(true);
+  });
 });

@@ -17,6 +17,7 @@ import { detectPackageManager, formatCommand, globalInstallCommand, initAll, ins
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
+import { parsePositiveInteger } from "./options.js";
 
 function outputLength(data: unknown): number {
   return (typeof data === "string" ? data : JSON.stringify(data, null, 2)).length;
@@ -173,10 +174,23 @@ program.command("search").argument("<query>").option("--repo <repo>", "repositor
   print(await measured(repoRoot, "search", { query, opts }, () => searchIndex(repoRoot, query, Number(opts.limit))));
 });
 
-program.command("read").argument("<path>").option("--repo <repo>", "repository root", ".").option("--budget <chars>", "4000").option("--query <query>").action(async (file, opts) => {
-  const repoRoot = resolveRepo(opts.repo);
-  print(await measured(repoRoot, "read", { file, opts }, () => readBudgeted(repoRoot, file, Number(opts.budget), opts.query)));
-});
+program.command("read")
+  .argument("<path>")
+  .option("--repo <repo>", "repository root", ".")
+  .option("--budget <chars>", "target output characters", parsePositiveInteger, 4000)
+  .option("--query <query>")
+  .option("--start-line <line>", "1-based start line", parsePositiveInteger)
+  .option("--line-count <count>", "maximum number of lines to return", parsePositiveInteger)
+  .action(async (file, opts) => {
+    const repoRoot = resolveRepo(opts.repo);
+    const readOptions = {
+      budgetChars: opts.budget as number,
+      query: opts.query as string | undefined,
+      startLine: opts.startLine as number | undefined,
+      lineCount: opts.lineCount as number | undefined
+    };
+    print(await measured(repoRoot, "read", { file, opts: readOptions }, () => readBudgeted(repoRoot, file, readOptions)));
+  });
 
 program.command("run").option("--repo <repo>", "repository root", ".").option("--kind <kind>", "generic").option("--allow-unconfigured").argument("[cmd...]", "command after --").allowUnknownOption(true).allowExcessArguments(true).action(async (cmdParts: string[], opts) => {
   const repoRoot = resolveRepo(opts.repo);
