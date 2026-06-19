@@ -29,7 +29,7 @@ export async function startMcp(repoRoot: string): Promise<void> {
     {
       path: z.string(),
       query: z.string().optional(),
-      budgetChars: z.number().default(4000),
+      budgetChars: z.number().int().positive().default(4000),
       startLine: z.number().int().positive().optional(),
       lineCount: z.number().int().positive().optional()
     },

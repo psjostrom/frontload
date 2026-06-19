@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { execa } from "execa";
 import { budgetReport } from "../../src/budget/events.js";
 import { readBudgeted } from "../../src/commands/read.js";
 import { runSummary } from "../../src/commands/run.js";
@@ -10,6 +11,18 @@ import { buildIndex } from "../../src/indexer/indexer.js";
 const fixture = path.resolve("fixtures/react-ts-app");
 
 describe("e2e proof workflow", () => {
+  it("reports invalid read line options as CLI validation errors", async () => {
+    const result = await execa(
+      process.execPath,
+      [path.resolve("dist/src/cli/index.js"), "read", "src/chart/ChartTooltip.tsx", "--repo", fixture, "--start-line", "nope"],
+      { reject: false }
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Expected a positive integer");
+    expect(result.stderr).not.toContain("TypeError");
+  });
+
   it("calls required tool handlers and stores transcript", async () => {
     fs.mkdirSync("proof", { recursive: true });
     fs.writeFileSync("proof/mcp-transcript.jsonl", "");

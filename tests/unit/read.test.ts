@@ -59,6 +59,53 @@ describe("budgeted read", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("does not advance past complete lines excluded by the character budget", () => {
+    const dir = tempRepo();
+    fs.writeFileSync(path.join(dir, "small-budget.ts"), "one\ntwo\nthree\nfour\n");
+
+    const result = readBudgeted(dir, "small-budget.ts", { budgetChars: 5, startLine: 1, lineCount: 3 });
+
+    expect(result.excerpt).toBe("one\n");
+    expect(result.startLine).toBe(1);
+    expect(result.endLine).toBe(1);
+    expect(result.nextRead).toContain("--start-line 2");
+    expect(result.editSafe).toBe(true);
+  });
+
+  it("returns an oversized first line intact so paging cannot lose content", () => {
+    const dir = tempRepo();
+    const longLine = "A".repeat(200);
+    fs.writeFileSync(path.join(dir, "long-line.ts"), `${longLine}\nsecond\n`);
+
+    const result = readBudgeted(dir, "long-line.ts", { budgetChars: 80, startLine: 1, lineCount: 2 });
+
+    expect(result.excerpt).toBe(`${longLine}\n`);
+    expect(result.endLine).toBe(1);
+    expect(result.nextRead).toContain("--start-line 2");
+    expect(result.editSafe).toBe(true);
+  });
+
+  it("keeps a query match inside a line-count-limited window", () => {
+    const dir = tempRepo();
+    const lines = Array.from({ length: 20 }, (_, i) => (i === 14 ? "TARGET" : `line ${i + 1}`));
+    fs.writeFileSync(path.join(dir, "query-window.ts"), `${lines.join("\n")}\n`);
+
+    const result = readBudgeted(dir, "query-window.ts", { budgetChars: 4000, query: "TARGET", lineCount: 3 });
+
+    expect(result.startLine).toBe(13);
+    expect(result.endLine).toBe(15);
+    expect(result.excerpt).toContain("TARGET");
+  });
+
+  it("rejects invalid numeric options before indexing line bounds", () => {
+    const dir = tempRepo();
+    fs.writeFileSync(path.join(dir, "invalid.ts"), "export const value = 1;\n");
+
+    expect(() => readBudgeted(dir, "invalid.ts", { startLine: Number.NaN })).toThrow("startLine must be a positive integer");
+    expect(() => readBudgeted(dir, "invalid.ts", { lineCount: 0 })).toThrow("lineCount must be a positive integer");
+    expect(() => readBudgeted(dir, "invalid.ts", { budgetChars: -1 })).toThrow("budgetChars must be a positive integer");
+  });
+
   it("marks redacted excerpts as not edit safe", () => {
     const dir = tempRepo();
     fs.writeFileSync(path.join(dir, "secret.ts"), "const apiKey = \"sk-abcdefghijklmnopqrstuvwxyz\";\nexport const x = 1;\n");
