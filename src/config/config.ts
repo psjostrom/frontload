@@ -12,7 +12,7 @@ export const configSchema = z.object({
   budgets: z.object({
     defaultDossierChars: z.number().int().positive().default(12000),
     defaultReadChars: z.number().int().positive().default(4000),
-    maxToolOutputChars: z.number().int().positive().default(8000),
+    maxToolOutputChars: z.number().int().min(64).default(8000),
     maxRawLogBytes: z.number().int().positive().default(5000000)
   }),
   commands: z.object({
@@ -33,7 +33,8 @@ export const configSchema = z.object({
     enabled: z.boolean().default(true),
     rewriteCommands: z.boolean().default(true),
     blockBroadShell: z.boolean().default(true),
-    blockNoisyReads: z.boolean().default(true)
+    blockNoisyReads: z.boolean().default(true),
+    maxReadLines: z.number().int().positive().default(200)
   })
 });
 
@@ -47,7 +48,7 @@ export const defaultConfig: FrontloadConfig = configSchema.parse({
   commands: { allowed: ["pnpm test", "pnpm vitest", "pnpm tsc", "npm test", "yarn test", "npx tsc", "git diff", "git status"], timeoutMs: 120000 },
   security: { redactSecrets: true, blockDangerousShell: true },
   localScout: { enabled: false, command: null, timeoutMs: 60000, maxOutputChars: 6000 },
-  gate: { enabled: true, rewriteCommands: true, blockBroadShell: true, blockNoisyReads: true }
+  gate: { enabled: true, rewriteCommands: true, blockBroadShell: true, blockNoisyReads: true, maxReadLines: 200 }
 });
 
 function mergeConfig(base: FrontloadConfig, partial: unknown): FrontloadConfig {

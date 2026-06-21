@@ -42,5 +42,12 @@
     "command": null,
     "timeoutMs": 60000,
     "maxOutputChars": 6000
+  },
+  "gate": {
+    "enabled": true,
+    "rewriteCommands": true,
+    "blockBroadShell": true,
+    "blockNoisyReads": true,
+    "maxReadLines": 200
   }
 }

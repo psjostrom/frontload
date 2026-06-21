@@ -2,13 +2,26 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "^Bash$",
         "hooks": [
           {
             "type": "command",
-            "command": "frontload hook pre-tool-use",
+            "command": "frontload hook pre-tool-use --host codex",
             "timeout": 10,
-            "statusMessage": "Checking Frontload gate"
+            "statusMessage": "Applying Frontload budget policy"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "frontload hook post-tool-use --host codex",
+            "timeout": 10,
+            "statusMessage": "Bounding Frontload command output"
           }
         ]
       }

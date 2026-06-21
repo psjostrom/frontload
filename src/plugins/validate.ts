@@ -91,13 +91,31 @@ function assertSkill(file: string): void {
 }
 
 function assertFrontloadHook(config: HooksConfig, host: "codex" | "claude", file: string): void {
-  const commandHooks = Object.values(config.hooks).flatMap((groups) => groups.flatMap((group) => group.hooks));
-  const frontloadHook = host === "claude"
-    ? commandHooks.find((hook) => hook.command === "frontload" && JSON.stringify(hook.args) === JSON.stringify(["hook", "pre-tool-use"]))
-    : commandHooks.find((hook) => hook.command === "frontload hook pre-tool-use" && !hook.args);
-  if (!frontloadHook) {
-    throw new Error(`${file} must define the ${host} Frontload pre-tool-use hook command`);
+  const expected = host === "claude"
+    ? {
+        PreToolUse: { matcher: "Read|Bash", command: "frontload", args: ["hook", "pre-tool-use", "--host", "claude"] },
+        PostToolUse: { matcher: "Grep|Glob", command: "frontload", args: ["hook", "post-tool-use", "--host", "claude"] }
+      }
+    : {
+        PreToolUse: { matcher: "^Bash$", command: "frontload hook pre-tool-use --host codex", args: undefined },
+        PostToolUse: { matcher: "^Bash$", command: "frontload hook post-tool-use --host codex", args: undefined }
+      };
+
+  for (const event of ["PreToolUse", "PostToolUse"] as const) {
+    const found = (config.hooks[event] ?? []).some((group) =>
+      group.matcher === expected[event].matcher &&
+      group.hooks.some((hook) =>
+        hook.command === expected[event].command && sameStringArray(hook.args, expected[event].args)
+      )
+    );
+    if (!found) {
+      throw new Error(`${file} must define the ${host} Frontload ${event} hook command`);
+    }
   }
+}
+
+function sameStringArray(left: string[] | undefined, right: string[] | undefined): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export function validatePlugin(root: string, host: "codex" | "claude"): PluginValidationResult {

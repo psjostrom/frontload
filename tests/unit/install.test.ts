@@ -36,11 +36,40 @@ describe("installer", () => {
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
     expect(result.agents[0].writes.map((write) => path.relative(home, write.path))).toEqual([
       ".codex/config.toml",
+      ".codex/hooks.json",
       ".codex/skills/frontload"
     ]);
     expect(codexConfig).toContain("[mcp_servers.frontload]");
     expect(codexConfig).toContain('command = "frontload"');
     expect(codexConfig).toContain('args = ["mcp", "--repo", "."]');
+    expect(JSON.parse(fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8")).hooks).toEqual({
+      PreToolUse: [
+        {
+          matcher: "^Bash$",
+          hooks: [
+            {
+              type: "command",
+              command: "frontload hook pre-tool-use --host codex",
+              timeout: 10,
+              statusMessage: "Applying Frontload budget policy"
+            }
+          ]
+        }
+      ],
+      PostToolUse: [
+        {
+          matcher: "^Bash$",
+          hooks: [
+            {
+              type: "command",
+              command: "frontload hook post-tool-use --host codex",
+              timeout: 10,
+              statusMessage: "Bounding Frontload command output"
+            }
+          ]
+        }
+      ]
+    });
     expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.readFileSync(path.join(home, ".codex/skills/frontload/SKILL.md"), "utf8")).toBe(
       fs.readFileSync(path.resolve("plugins/codex/skills/frontload/SKILL.md"), "utf8")
@@ -56,6 +85,7 @@ describe("installer", () => {
 
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex", "claude"]);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(true);
@@ -64,19 +94,34 @@ describe("installer", () => {
       command: "frontload",
       args: ["mcp", "--repo", "."]
     });
-    expect(JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8")).hooks.PreToolUse).toEqual([
-      {
-        matcher: "Read|Bash",
-        hooks: [
-          {
-            type: "command",
-            command: "frontload",
-            args: ["hook", "pre-tool-use"],
-            timeout: 10
-          }
-        ]
-      }
-    ]);
+    expect(JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8")).hooks).toEqual({
+      PreToolUse: [
+        {
+          matcher: "Read|Bash",
+          hooks: [
+            {
+              type: "command",
+              command: "frontload",
+              args: ["hook", "pre-tool-use", "--host", "claude"],
+              timeout: 10
+            }
+          ]
+        }
+      ],
+      PostToolUse: [
+        {
+          matcher: "Grep|Glob",
+          hooks: [
+            {
+              type: "command",
+              command: "frontload",
+              args: ["hook", "post-tool-use", "--host", "claude"],
+              timeout: 10
+            }
+          ]
+        }
+      ]
+    });
   });
 
   it("can configure Claude Code globally", () => {
@@ -94,7 +139,9 @@ describe("installer", () => {
     expect(fs.readFileSync(path.join(home, ".claude/skills/frontload/SKILL.md"), "utf8")).toBe(
       fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
     );
-    expect(JSON.parse(fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8")).hooks.PreToolUse[0].hooks[0].command).toBe("frontload");
+    const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8"));
+    expect(settings.hooks.PreToolUse[0].hooks[0].args).toEqual(["hook", "pre-tool-use", "--host", "claude"]);
+    expect(settings.hooks.PostToolUse[0].hooks[0].args).toEqual(["hook", "post-tool-use", "--host", "claude"]);
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
   });
 
@@ -119,6 +166,10 @@ describe("installer", () => {
           {
             matcher: "Bash",
             hooks: [{ type: "command", command: "post-hook" }]
+          },
+          {
+            matcher: "Glob",
+            hooks: [{ type: "command", command: "frontload", args: ["hook", "post-tool-use"], timeout: 3 }]
           }
         ]
       }
@@ -129,7 +180,19 @@ describe("installer", () => {
 
     expect(claudeConfig.mcpServers.existing).toEqual({ command: "other" });
     expect(claudeConfig.mcpServers.frontload.command).toBe("frontload");
+    expect(claudeSettings.hooks.PostToolUse).toHaveLength(2);
     expect(claudeSettings.hooks.PostToolUse[0].hooks[0].command).toBe("post-hook");
+    expect(claudeSettings.hooks.PostToolUse[1]).toEqual({
+      matcher: "Grep|Glob",
+      hooks: [
+        {
+          type: "command",
+          command: "frontload",
+          args: ["hook", "post-tool-use", "--host", "claude"],
+          timeout: 10
+        }
+      ]
+    });
     expect(claudeSettings.hooks.PreToolUse).toHaveLength(2);
     expect(claudeSettings.hooks.PreToolUse[0].hooks[0].command).toBe("other-hook");
     expect(claudeSettings.hooks.PreToolUse[1]).toEqual({
@@ -138,7 +201,7 @@ describe("installer", () => {
         {
           type: "command",
           command: "frontload",
-          args: ["hook", "pre-tool-use"],
+          args: ["hook", "pre-tool-use", "--host", "claude"],
           timeout: 10
         }
       ]
@@ -168,6 +231,47 @@ describe("installer", () => {
     expect(codexConfig).toContain('command = "frontload"');
     expect(codexConfig).not.toContain("old-frontload");
     expect(codexConfig).not.toContain("[mcp_servers.frontload.env]");
+  });
+
+  it("preserves unrelated Codex hooks and replaces stale Frontload hooks", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-hooks-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-hooks-"));
+    const hooksFile = path.join(home, ".codex/hooks.json");
+    fs.mkdirSync(path.dirname(hooksFile), { recursive: true });
+    fs.writeFileSync(hooksFile, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "^apply_patch$",
+            hooks: [{ type: "command", command: "other-pre-hook" }]
+          },
+          {
+            matcher: "^Bash$",
+            hooks: [{ type: "command", command: "frontload hook pre-tool-use", timeout: 3 }]
+          }
+        ],
+        PostToolUse: [
+          {
+            matcher: "^Bash$",
+            hooks: [
+              { type: "command", command: "other-post-hook" },
+              { type: "command", command: "frontload hook post-tool-use", timeout: 3 }
+            ]
+          }
+        ]
+      }
+    }, null, 2));
+
+    const result = initAll(repo, ["codex"], home);
+    const hooks = JSON.parse(fs.readFileSync(hooksFile, "utf8")).hooks;
+
+    expect(result.agents[0].notes.join(" ")).toContain("/hooks");
+    expect(hooks.PreToolUse).toHaveLength(2);
+    expect(hooks.PreToolUse[0].hooks).toEqual([{ type: "command", command: "other-pre-hook" }]);
+    expect(hooks.PreToolUse[1].hooks[0].command).toBe("frontload hook pre-tool-use --host codex");
+    expect(hooks.PostToolUse).toHaveLength(2);
+    expect(hooks.PostToolUse[0].hooks).toEqual([{ type: "command", command: "other-post-hook" }]);
+    expect(hooks.PostToolUse[1].hooks[0].command).toBe("frontload hook post-tool-use --host codex");
   });
 
   it("parses agent lists", () => {

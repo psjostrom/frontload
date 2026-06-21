@@ -22,6 +22,14 @@ export type GateOptions = {
   readCommand?: string;
 };
 
+export type CompactedToolOutput = {
+  output: unknown;
+  originalChars: number;
+  outputChars: number;
+  fitsBudget: boolean;
+  truncated: boolean;
+};
+
 type GatePayload = {
   tool_name?: unknown;
   tool_input?: unknown;
@@ -212,9 +220,54 @@ function lockfilePath(command: string): string | null {
   return parts.slice(1).find((part) => /^(?:\.\/)?(?:pnpm-lock\.yaml|package-lock\.json|yarn\.lock)$/.test(part)) ?? null;
 }
 
+function rgDecision(command: string, options: GateOptions): { decision: "allow"; reason: string; command: string } | null {
+  const parts = shellWords(command);
+  if (parts[0] !== "rg") return null;
+  const search = options.searchCommand ?? "frontload search";
+
+  if (parts[1] === "--files") {
+    const rest = parts.slice(2);
+    if (rest.length > 0) return null;
+    return {
+      decision: "allow",
+      reason: "Rewrote broad ripgrep inventory through Frontload search so the agent receives bounded indexed results.",
+      command: `${search} ${shellQuote(".")} --limit 50`
+    };
+  }
+
+  const fixedFlag = parts.findIndex((part) => part === "-F" || part === "--fixed-strings");
+  if (fixedFlag === -1) return null;
+  if (parts.slice(1).some((part, index) => index + 1 !== fixedFlag && part.startsWith("-"))) return null;
+  const pattern = parts[fixedFlag + 1];
+  const trailing = parts.slice(fixedFlag + 2);
+  if (!pattern || trailing.length > 1 || (trailing.length === 1 && trailing[0] !== ".")) return null;
+  return {
+    decision: "allow",
+    reason: "Rewrote broad literal ripgrep through Frontload search so the agent receives bounded indexed results.",
+    command: `${search} ${shellQuote(pattern)} --limit 20`
+  };
+}
+
+function fdDecision(command: string, options: GateOptions): { decision: "allow"; reason: string; command: string } | null {
+  const parts = shellWords(command);
+  if (parts[0] !== "fd") return null;
+  const rest = parts.slice(1);
+  if (rest.length > 0) return null;
+  const search = options.searchCommand ?? "frontload search";
+  return {
+    decision: "allow",
+    reason: "Rewrote broad fd inventory through Frontload search so the agent receives bounded indexed results.",
+    command: `${search} ${shellQuote(".")} --limit 50`
+  };
+}
+
 function broadShellDecision(command: string, options: GateOptions): { decision: "allow"; reason: string; command: string } | { decision: "deny"; reason: string } | null {
   const search = options.searchCommand ?? "frontload search";
   const read = options.readCommand ?? "frontload read";
+  const ripgrep = rgDecision(command, options);
+  if (ripgrep) return ripgrep;
+  const fd = fdDecision(command, options);
+  if (fd) return fd;
   const grep = grepAnalysis(command);
   if (grep?.recursive && grep.unsupported) {
     return {
@@ -225,7 +278,7 @@ function broadShellDecision(command: string, options: GateOptions): { decision: 
   if (grep?.recursive && grep.pattern) {
     return {
       decision: "allow",
-      reason: "Rewrote broad recursive grep through Frontload search so Claude receives bounded indexed results.",
+      reason: "Rewrote broad recursive grep through Frontload search so the agent receives bounded indexed results.",
       command: `${search} ${shellQuote(grep.pattern)} --limit 20`
     };
   }
@@ -238,14 +291,14 @@ function broadShellDecision(command: string, options: GateOptions): { decision: 
   if (/^find\s+\.(?:\s|$)/.test(command)) {
     return {
       decision: "allow",
-      reason: "Rewrote broad find through Frontload search so Claude receives a bounded repo inventory.",
+      reason: "Rewrote broad find through Frontload search so the agent receives a bounded repo inventory.",
       command: `${search} ${shellQuote(findQuery(command))} --limit 50`
     };
   }
   if (/^ls\s+-(?:[A-Za-z]*R[A-Za-z]*)(?:\s|$)/.test(command)) {
     return {
       decision: "allow",
-      reason: "Rewrote recursive ls through Frontload search so Claude receives bounded indexed results.",
+      reason: "Rewrote recursive ls through Frontload search so the agent receives bounded indexed results.",
       command: `${search} ${shellQuote(lsQuery(command))} --limit 50`
     };
   }
@@ -253,11 +306,135 @@ function broadShellDecision(command: string, options: GateOptions): { decision: 
   if (lockfile) {
     return {
       decision: "allow",
-      reason: "Rewrote noisy lockfile cat through Frontload read so Claude receives a bounded view.",
+      reason: "Rewrote noisy lockfile cat through Frontload read so the agent receives a bounded view.",
       command: `${read} ${shellQuote(lockfile)} --budget 4000`
     };
   }
   return null;
+}
+
+function serializedChars(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  const serialized = JSON.stringify(value);
+  return serialized?.length ?? 0;
+}
+
+function truncationMarker(removed: number, noun: "chars" | "results"): string {
+  return `[Frontload truncated ${removed} ${noun}]`;
+}
+
+function compactString(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  let marker = truncationMarker(value.length, "chars");
+  if (marker.length > maxChars) marker = "[Frontload truncated]";
+  if (marker.length > maxChars) return marker.slice(0, Math.max(0, maxChars));
+  const prefixChars = Math.max(0, maxChars - marker.length - 1);
+  return `${value.slice(0, prefixChars)}${prefixChars ? "\n" : ""}${marker}`;
+}
+
+function compactStringArray(value: string[], maxChars: number): string[] {
+  if (serializedChars(value) <= maxChars) return [...value];
+  for (let keep = value.length - 1; keep >= 0; keep--) {
+    const marker = truncationMarker(value.length - keep, "results");
+    const candidate = [...value.slice(0, keep), marker];
+    if (serializedChars(candidate) <= maxChars) return candidate;
+  }
+  return [];
+}
+
+function jsonClone(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+type ArrayCandidate = { value: unknown[] };
+type StringCandidate = { parent: Record<string, unknown> | unknown[]; key: string | number; value: string };
+type NumberCandidate = { parent: Record<string, unknown> | unknown[]; key: string | number; value: number };
+
+function reductionCandidates(
+  value: unknown,
+  arrays: ArrayCandidate[],
+  strings: StringCandidate[],
+  numbers: NumberCandidate[],
+  parent?: Record<string, unknown> | unknown[],
+  key?: string | number
+): void {
+  if (typeof value === "string") {
+    if (parent !== undefined && key !== undefined && value.length > 0) strings.push({ parent, key, value });
+    return;
+  }
+  if (typeof value === "number") {
+    if (parent !== undefined && key !== undefined && String(value).length > 1) numbers.push({ parent, key, value });
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 0) arrays.push({ value });
+    value.forEach((item, index) => reductionCandidates(item, arrays, strings, numbers, value, index));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [field, nested] of Object.entries(value)) {
+    reductionCandidates(nested, arrays, strings, numbers, value as Record<string, unknown>, field);
+  }
+}
+
+function compactStructured(value: unknown, maxChars: number): unknown {
+  const output = jsonClone(value);
+  if (!output || typeof output !== "object") return output;
+  if (!Array.isArray(output) && typeof (output as Record<string, unknown>).truncated === "boolean") {
+    (output as Record<string, unknown>).truncated = true;
+  }
+
+  while (serializedChars(output) > maxChars) {
+    const arrays: ArrayCandidate[] = [];
+    const strings: StringCandidate[] = [];
+    const numbers: NumberCandidate[] = [];
+    reductionCandidates(output, arrays, strings, numbers);
+    const array = arrays.sort((left, right) => right.value.length - left.value.length)[0];
+    if (array) {
+      array.value.pop();
+      continue;
+    }
+    const string = strings.sort((left, right) => right.value.length - left.value.length)[0];
+    if (string) {
+      const excess = serializedChars(output) - maxChars;
+      const nextLength = Math.max(0, string.value.length - Math.max(1, excess));
+      string.parent[string.key as never] = compactString(string.value, nextLength) as never;
+      continue;
+    }
+    const number = numbers.sort((left, right) => String(right.value).length - String(left.value).length)[0];
+    if (!number) break;
+    number.parent[number.key as never] = 0 as never;
+  }
+  return output;
+}
+
+export function compactToolOutput(value: unknown, maxChars: number): CompactedToolOutput {
+  if (!Number.isInteger(maxChars) || maxChars < 2) {
+    throw new RangeError("Tool output budget must be an integer of at least 2 characters.");
+  }
+  const originalChars = serializedChars(value);
+  if (originalChars <= maxChars) {
+    return { output: value, originalChars, outputChars: originalChars, fitsBudget: true, truncated: false };
+  }
+
+  let output: unknown;
+  if (typeof value === "string") output = compactString(value, maxChars);
+  else if (Array.isArray(value) && value.every((item) => typeof item === "string")) output = compactStringArray(value, maxChars);
+  else if (Array.isArray(value) || (value && typeof value === "object")) output = compactStructured(value, maxChars);
+  else output = value;
+  const outputChars = serializedChars(output);
+  const fitsBudget = outputChars <= maxChars;
+  return {
+    output,
+    originalChars,
+    outputChars,
+    fitsBudget,
+    truncated: fitsBudget && outputChars < originalChars
+  };
 }
 
 export function evaluate(payload: GatePayload, config: Pick<FrontloadConfig, "gate">, options: GateOptions = {}): PreToolUseHookOutput | null {
@@ -274,7 +451,7 @@ export function evaluate(payload: GatePayload, config: Pick<FrontloadConfig, "ga
       const kind = commandKind(command);
       if (kind) {
         const runner = options.runnerCommand ?? "frontload run";
-        return output("allow", `Run ${kind} through Frontload so Claude receives a compact summary.`, {
+        return output("allow", `Run ${kind} through Frontload so the agent receives a compact summary.`, {
           ...input,
           command: `${runner} --kind ${kind} -- ${command}`
         });
@@ -296,9 +473,14 @@ export function evaluate(payload: GatePayload, config: Pick<FrontloadConfig, "ga
     if (config.gate.blockNoisyReads && (category === "generated" || category === "lockfile")) {
       return output(
         "deny",
-        `This ${category} file is noisy. Use mcp__frontload__fl_read_budgeted with a focused query, or mcp__frontload__fl_search before reading it.`
+        `This ${category} file is noisy. Use mcp__frontload__fl_read_budgeted with a focused query, or mcp__frontload__fl_search so the agent receives only relevant content.`
       );
     }
+    const requestedLimit = typeof input.limit === "number" && input.limit > 0 ? input.limit : config.gate.maxReadLines;
+    return output("allow", "Bound the source read so the agent receives a focused contiguous window.", {
+      ...input,
+      limit: Math.min(requestedLimit, config.gate.maxReadLines)
+    });
   }
 
   return null;

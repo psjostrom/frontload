@@ -7,7 +7,20 @@
           {
             "type": "command",
             "command": "frontload",
-            "args": ["hook", "pre-tool-use"],
+            "args": ["hook", "pre-tool-use", "--host", "claude"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "frontload",
+            "args": ["hook", "post-tool-use", "--host", "claude"],
             "timeout": 10
           }
         ]
