@@ -1,15 +1,48 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execa } from "execa";
-import { budgetReport } from "../../src/budget/events.js";
-import { readBudgeted } from "../../src/commands/read.js";
-import { runSummary } from "../../src/commands/run.js";
-import { generateDossier } from "../../src/dossier/dossier.js";
-import { buildIndex } from "../../src/indexer/indexer.js";
+import { budgetReport, readEvents } from "../../src/budget/events.js";
+import { searchIndexMeasured } from "../../src/dossier/dossier.js";
+import { createMcpHandlers } from "../../src/mcp/server.js";
 
 const fixture = path.resolve("fixtures/react-ts-app");
+
+async function createMockedMcpHandlers(
+  repoRoot: string,
+  options: {
+    appendEvent?: typeof import("../../src/budget/events.js").appendEvent;
+    runSummary?: typeof import("../../src/commands/run.js").runSummary;
+  } = {}
+): Promise<ReturnType<typeof createMcpHandlers>> {
+  vi.resetModules();
+  vi.doMock("../../src/budget/events.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/budget/events.js")>("../../src/budget/events.js");
+    return {
+      ...actual,
+      appendEvent: options.appendEvent ?? actual.appendEvent
+    };
+  });
+  if (options.runSummary) {
+    vi.doMock("../../src/commands/run.js", async () => {
+      const actual = await vi.importActual<typeof import("../../src/commands/run.js")>("../../src/commands/run.js");
+      return {
+        ...actual,
+        runSummary: options.runSummary
+      };
+    });
+  }
+  try {
+    const mod = await import("../../src/mcp/server.js");
+    return mod.createMcpHandlers(repoRoot);
+  } finally {
+    vi.doUnmock("../../src/budget/events.js");
+    if (options.runSummary) {
+      vi.doUnmock("../../src/commands/run.js");
+    }
+  }
+}
 
 describe("e2e proof workflow", () => {
   it("runs host-aware hook subcommands through the built CLI", async () => {
@@ -57,6 +90,57 @@ describe("e2e proof workflow", () => {
     expect(invalid.stderr).toContain("Unknown hook host: cursor");
   });
 
+  it("still returns a successful MCP response when event persistence fails", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-fail-open-"));
+    const handlers = await createMockedMcpHandlers(repo, {
+      appendEvent: () => {
+        throw new Error("persist failed");
+      }
+    });
+
+    const response = await handlers.policy({});
+    expect(JSON.parse(response.content[0].text)).toMatchObject({
+      summary: "Current Frontload policy."
+    });
+  });
+
+  it("keeps the original MCP error when event persistence also fails", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-error-mask-"));
+    const handlers = await createMockedMcpHandlers(repo, {
+      appendEvent: () => {
+        throw new Error("persist failed");
+      },
+      runSummary: () => {
+        throw new Error("tool failed");
+      }
+    });
+
+    await expect(handlers.run({ kind: "generic", command: "node -e \"console.log('ok')\"" })).rejects.toThrow("tool failed");
+  });
+
+  it("records the exact run baseline bytes from combined stdout and stderr", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-run-bytes-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      commands: {
+        allowed: ["./print-lines.sh"]
+      }
+    }));
+    const scriptPath = path.join(repo, "print-lines.sh");
+    fs.writeFileSync(scriptPath, "#!/bin/sh\nprintf 'stdout line\\n'; printf 'stderr line\\n' >&2\n");
+    fs.chmodSync(scriptPath, 0o755);
+
+    const response = await createMcpHandlers(repo).run({ kind: "generic", command: "./print-lines.sh" });
+    const data = JSON.parse(response.content[0].text) as { rawOutputBytes: number };
+    const event = readEvents(repo).at(-1);
+    const actual = await execa(scriptPath, [], { cwd: repo, all: true, stripFinalNewline: false });
+
+    expect(Buffer.byteLength(actual.all ?? "")).toBe(data.rawOutputBytes);
+    expect(event).toMatchObject({
+      baselineBytes: data.rawOutputBytes,
+      baselineKind: "raw-command-output"
+    });
+  });
+
   it("reports invalid read line options as CLI validation errors", async () => {
     const result = await execa(
       process.execPath,
@@ -72,25 +156,149 @@ describe("e2e proof workflow", () => {
   it("calls required tool handlers and stores transcript", async () => {
     fs.mkdirSync("proof", { recursive: true });
     fs.writeFileSync("proof/mcp-transcript.jsonl", "");
-    const index = await buildIndex(fixture);
-    const dossier = await generateDossier(fixture, "Fix stale chart tooltip value after sensor reconnect", 12000);
+    fs.rmSync(path.join(fixture, ".frontload/events.jsonl"), { force: true });
+    const handlers = createMcpHandlers(fixture);
     const calls = [
-      ["fl_policy", { summary: "Current Frontload policy." }],
-      ["fl_repo_index", index],
-      ["fl_repo_dossier", dossier],
-      ["fl_read_budgeted", readBudgeted(fixture, "src/chart/ChartTooltip.tsx", { budgetChars: 4000, query: "tooltip reconnect" })],
-      ["fl_run_summary", await runSummary(fixture, "test", ["node", "-e", "console.error('FAIL src/chart/ChartTooltip.test.tsx\\nx updates stale chart tooltip value after sensor reconnect'); process.exit(1)"], true)],
-      ["fl_budget_report", budgetReport(fixture)]
+      ["fl_policy", await handlers.policy({})],
+      ["fl_repo_index", await handlers.index({ force: true })],
+      ["fl_repo_dossier", await handlers.dossier({ task: "Fix stale chart tooltip value after sensor reconnect", budgetChars: 12000, maxFiles: 12 })],
+      ["fl_search", await handlers.search({ query: ".", limit: 2 })],
+      ["fl_read_budgeted", await handlers.read({ path: "src/chart/ChartTooltip.tsx", budgetChars: 4000, query: "tooltip reconnect" })],
+      ["fl_run_summary", await handlers.run({ kind: "test", command: "pnpm test" })],
+      ["fl_git_diff_summary", await handlers.diff({ staged: false })],
+      ["fl_budget_report", await handlers.budget({})]
     ] as const;
     for (const [tool, response] of calls) {
-      fs.appendFileSync("proof/mcp-transcript.jsonl", JSON.stringify({ tool, response: { summary: (response as any).summary ?? "ok" } }) + "\n");
+      const text = response.content[0].text;
+      const data = JSON.parse(text);
+      fs.appendFileSync("proof/mcp-transcript.jsonl", JSON.stringify({ tool, response: { summary: data.summary ?? "ok" } }) + "\n");
     }
-    expect(index.stats.fileCount).toBeGreaterThan(4);
+    const index = JSON.parse(calls.find(([tool]) => tool === "fl_repo_index")![1].content[0].text);
+    const dossier = JSON.parse(calls.find(([tool]) => tool === "fl_repo_dossier")![1].content[0].text);
+    const read = JSON.parse(calls.find(([tool]) => tool === "fl_read_budgeted")![1].content[0].text);
+    expect(index.index.stats.fileCount).toBeGreaterThan(4);
     expect(dossier.markdown).toContain("ChartTooltip.tsx");
-    const read = calls.find(([tool]) => tool === "fl_read_budgeted")?.[1] as ReturnType<typeof readBudgeted>;
     expect(read.excerpt).not.toContain("1 |");
     expect(read.numberedExcerpt).toContain("|");
     expect(read.editSafe).toBe(true);
+
+    const events = readEvents(fixture);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "mcp", operation: "read", baselineKind: "full-file" }),
+      expect.objectContaining({ source: "mcp", operation: "run", baselineKind: "raw-command-output" }),
+      expect.objectContaining({ source: "mcp", operation: "search", baselineKind: "unbounded-search-results" })
+    ]));
+    expect(events.find((event) => event.operation === "dossier")?.baselineBytes).toBeUndefined();
+    const operations: Record<string, string> = {
+      fl_policy: "policy",
+      fl_repo_index: "index",
+      fl_repo_dossier: "dossier",
+      fl_search: "search",
+      fl_read_budgeted: "read",
+      fl_run_summary: "run",
+      fl_git_diff_summary: "diff"
+    };
+    for (const [tool, response] of calls.filter(([name]) => name !== "fl_budget_report")) {
+      const event = events.find((candidate) => candidate.operation === operations[tool]);
+      expect(event?.outputBytes).toBe(Buffer.byteLength(response.content[0].text));
+    }
     expect(fs.existsSync("proof/mcp-transcript.jsonl")).toBe(true);
+  });
+
+  it("records exact CLI baselines for measured operations", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-savings-"));
+    fs.mkdirSync(path.join(repo, ".frontload"));
+    fs.mkdirSync(path.join(repo, "src"));
+    const source = `${Array.from({ length: 80 }, (_, i) => `export const value${i} = ${i};`).join("\n")}\n`;
+    fs.writeFileSync(path.join(repo, "src/sample.ts"), source);
+    await execa("git", ["init"], { cwd: repo });
+    await execa("git", ["add", "."], { cwd: repo });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: repo,
+      env: {
+        GIT_AUTHOR_NAME: "A",
+        GIT_AUTHOR_EMAIL: "a@example.com",
+        GIT_COMMITTER_NAME: "A",
+        GIT_COMMITTER_EMAIL: "a@example.com"
+      }
+    });
+    fs.appendFileSync(path.join(repo, "src/sample.ts"), "export const changed = true;\n");
+
+    const cli = path.resolve("dist/src/cli/index.js");
+    const indexResult = await execa(process.execPath, [cli, "index", "--repo", repo], { stripFinalNewline: false });
+    await execa(process.execPath, [cli, "search", ".", "--repo", repo, "--limit", "1"]);
+    await execa(process.execPath, [cli, "read", "src/sample.ts", "--repo", repo, "--budget", "200"]);
+    await execa(process.execPath, [
+      cli,
+      "run",
+      "--repo",
+      repo,
+      "--kind",
+      "generic",
+      "--allow-unconfigured",
+      "--",
+      "node",
+      "-e",
+      "console.log('x'.repeat(2000))"
+    ]);
+    await execa(process.execPath, [cli, "diff", "--repo", repo]);
+
+    const events = readEvents(repo);
+    expect(Buffer.byteLength(indexResult.stdout)).toBe(events.find((event) => event.operation === "index")?.outputBytes);
+    const unboundedSearch = await searchIndexMeasured(repo, ".", Number.MAX_SAFE_INTEGER);
+    expect(events.find((event) => event.operation === "search")?.baselineBytes).toBe(
+      Buffer.byteLength(`${JSON.stringify(unboundedSearch.unboundedResults, null, 2)}\n`)
+    );
+    const rawDiff = await execa("git", ["diff", "--patch"], { cwd: repo, stripFinalNewline: false });
+    expect(events.find((event) => event.operation === "read")).toMatchObject({
+      baselineBytes: Buffer.byteLength(fs.readFileSync(path.join(repo, "src/sample.ts"))),
+      baselineKind: "full-file"
+    });
+    expect(events.find((event) => event.operation === "run")).toMatchObject({
+      baselineBytes: 2001,
+      baselineKind: "raw-command-output"
+    });
+    expect(events.find((event) => event.operation === "diff")).toMatchObject({
+      baselineBytes: Buffer.byteLength(rawDiff.stdout),
+      baselineKind: "raw-diff"
+    });
+    expect(events.find((event) => event.operation === "search")).toMatchObject({
+      baselineKind: "unbounded-search-results"
+    });
+    const report = budgetReport(repo);
+    expect(report.measuredOperations).toBe(4);
+    expect(report.unmeasuredOperations).toBe(1);
+    expect(report.summary).toMatch(/saved|used extra bytes/);
+  });
+
+  it("measures local scout against uncapped local output", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-local-scout-"));
+    fs.mkdirSync(path.join(repo, ".frontload"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      localScout: {
+        enabled: true,
+        command: "printf 'stdout line\\n'; printf 'stderr line\\n' >&2",
+        timeoutMs: 5000,
+        maxOutputChars: 10
+      }
+    }));
+
+    const response = await createMcpHandlers(repo).localScout({ prompt: "inspect" });
+    const data = JSON.parse(response.content[0].text);
+    const event = readEvents(repo).at(-1);
+    const actual = await execa("sh", ["-lc", "printf 'stdout line\\n'; printf 'stderr line\\n' >&2"], {
+      cwd: repo,
+      all: true,
+      stripFinalNewline: false
+    });
+
+    expect(data.output).toHaveLength(10);
+    expect(Buffer.byteLength(actual.all ?? "")).toBe(event?.baselineBytes);
+    expect(event).toMatchObject({
+      source: "mcp",
+      operation: "local-scout",
+      baselineBytes: Buffer.byteLength(actual.all ?? ""),
+      baselineKind: "raw-local-scout-output"
+    });
   });
 });

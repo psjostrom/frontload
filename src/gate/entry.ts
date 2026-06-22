@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendEvent, outputSize } from "../budget/events.js";
 import { loadConfig } from "../config/config.js";
 import { compactToolOutput, evaluate } from "./gate.js";
 
@@ -90,6 +91,7 @@ export async function runPreToolUseHook(host: HookHost, rawInput?: string): Prom
 }
 
 export async function runPostToolUseHook(host: HookHost, rawInput?: string): Promise<string | null> {
+  const start = Date.now();
   try {
     const raw = rawInput ?? (await readStdin());
     const payload = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
@@ -100,6 +102,23 @@ export async function runPostToolUseHook(host: HookHost, rawInput?: string): Pro
     if (host === "codex" && typeof payload.tool_response !== "string") return null;
 
     const compacted = compactToolOutput(payload.tool_response, initialized.config.budgets.maxToolOutputChars);
+    const replacement = compacted.fitsBudget && compacted.truncated ? compacted.output : payload.tool_response;
+    const replacementSize = outputSize(replacement);
+    try {
+      appendEvent(initialized.root, {
+        source: "hook",
+        operation: `post-tool-use:${name}`,
+        inputChars: JSON.stringify(payload.tool_input ?? {}).length,
+        outputChars: replacementSize.chars,
+        outputBytes: replacementSize.bytes,
+        baselineBytes: outputSize(payload.tool_response).bytes,
+        baselineKind: "observed-tool-output",
+        durationMs: Date.now() - start,
+        success: true
+      });
+    } catch {
+      // Accounting must not interfere with host hook behavior.
+    }
     if (!compacted.fitsBudget || !compacted.truncated) return null;
     if (host === "claude") {
       return JSON.stringify({

@@ -1,13 +1,25 @@
+export type BaselineKind =
+  | "raw-command-output"
+  | "full-file"
+  | "raw-diff"
+  | "unbounded-search-results"
+  | "raw-local-scout-output"
+  | "observed-tool-output";
+
 export type BudgetEvent = {
   timestamp: string;
   source: "cli" | "mcp" | "hook";
   operation: string;
   inputChars: number;
   outputChars: number;
+  outputBytes: number;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
   durationMs: number;
   success: boolean;
+  baselineBytes?: number;
+  baselineKind?: BaselineKind;
+  netSavedBytes?: number;
 };
 
 export type IndexedFile = {

@@ -131,13 +131,12 @@ function contentSignals(repoRoot: string, file: IndexedFile, query: string, quer
   return { score, why: matches.length ? ["content match"] : [], matches };
 }
 
-function inventorySearch(index: RepoIndex, query: string, limit: number): Ranked[] {
+function inventorySearch(index: RepoIndex, query: string): Ranked[] {
   const pathQuery = query.trim().replace(/^\.\//, "").replace(/\/$/, "");
   const normalized = pathQuery === "." ? "" : pathQuery.toLowerCase();
   return index.files
     .filter((file) => !normalized || file.path.toLowerCase().includes(normalized))
     .sort((a, b) => a.path.localeCompare(b.path))
-    .slice(0, limit)
     .map((file) => ({ file, score: 1, why: ["repo inventory"], relatedTests: relatedTestsFor(file, index) }));
 }
 
@@ -217,22 +216,35 @@ export async function generateDossier(repoRoot: string, task: string, budgetChar
   return { markdown: capped.text, ranked, truncated: capped.truncated };
 }
 
-export async function searchIndex(repoRoot: string, query: string, limit = 10): Promise<Ranked[]> {
+export type MeasuredSearchResult = {
+  results: Ranked[];
+  unboundedResults: Ranked[];
+};
+
+export async function searchIndexMeasured(repoRoot: string, query: string, limit = 10): Promise<MeasuredSearchResult> {
   const index = await loadFreshIndex(repoRoot);
   const queryWords = taskTerms(query);
-  if (!queryWords.length && /^[\w./-]+$/.test(query.trim())) return inventorySearch(index, query, limit);
-  return index.files
-    .map((file) => {
-      const ranked = scoreFile(file, queryWords, index);
-      const content = contentSignals(repoRoot, file, query, queryWords);
-      return {
-        ...ranked,
-        score: ranked.score + content.score,
-        why: [...ranked.why, ...content.why],
-        ...(content.matches.length ? { matches: content.matches } : {})
-      };
-    })
-    .filter((ranked) => ranked.score > 0)
-    .sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path))
-    .slice(0, limit);
+  const unboundedResults = !queryWords.length && /^[\w./-]+$/.test(query.trim())
+    ? inventorySearch(index, query)
+    : index.files
+      .map((file) => {
+        const ranked = scoreFile(file, queryWords, index);
+        const content = contentSignals(repoRoot, file, query, queryWords);
+        return {
+          ...ranked,
+          score: ranked.score + content.score,
+          why: [...ranked.why, ...content.why],
+          ...(content.matches.length ? { matches: content.matches } : {})
+        };
+      })
+      .filter((ranked) => ranked.score > 0)
+      .sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path));
+  return {
+    results: unboundedResults.slice(0, limit),
+    unboundedResults
+  };
+}
+
+export async function searchIndex(repoRoot: string, query: string, limit = 10): Promise<Ranked[]> {
+  return (await searchIndexMeasured(repoRoot, query, limit)).results;
 }

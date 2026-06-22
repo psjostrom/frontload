@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { execa } from "execa";
 import { budgetReport } from "../budget/events.js";
 import { fileCategory } from "../utils/category.js";
@@ -5,9 +6,12 @@ import { capText } from "../utils/text.js";
 
 export { fileCategory };
 
-export async function gitDiffSummary(repoRoot: string, staged = false): Promise<{ summary: string; changedFiles: Array<{ path: string; added: number; removed: number; category: string; risky: boolean }>; riskyChanges: string[]; truncated: boolean }> {
+export async function gitDiffSummary(repoRoot: string, staged = false): Promise<{ summary: string; changedFiles: Array<{ path: string; added: number; removed: number; category: string; risky: boolean }>; riskyChanges: string[]; truncated: boolean; rawDiffBytes: number }> {
   const args = ["diff", "--numstat", ...(staged ? ["--staged"] : [])];
-  const num = await execa("git", args, { cwd: repoRoot, reject: false });
+  const [num, patch] = await Promise.all([
+    execa("git", args, { cwd: repoRoot, reject: false }),
+    countGitPatchBytes(repoRoot, staged)
+  ]);
   const changedFiles = num.stdout
     .split(/\r?\n/)
     .filter(Boolean)
@@ -20,7 +24,40 @@ export async function gitDiffSummary(repoRoot: string, staged = false): Promise<
   const riskyChanges = changedFiles.filter((f) => f.risky).map((f) => f.path);
   const names = changedFiles.map((f) => `- ${f.path}: +${f.added}/-${f.removed}, ${f.category}${f.risky ? ", risky" : ""}`).join("\n");
   const capped = capText(`Changed files: ${changedFiles.length}\n${names || "No diff."}\n\nRisky changes:\n${riskyChanges.map((r) => `- ${r}`).join("\n") || "- none"}`, 8000);
-  return { summary: capped.text, changedFiles, riskyChanges, truncated: capped.truncated };
+  return { summary: capped.text, changedFiles, riskyChanges, truncated: capped.truncated, rawDiffBytes: patch };
+}
+
+async function countGitPatchBytes(repoRoot: string, staged = false): Promise<number> {
+  const child = spawn("git", ["diff", "--patch", ...(staged ? ["--staged"] : [])], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let rawDiffBytes = 0;
+  let stderr = "";
+  child.stdout?.on("data", (chunk: Buffer | string) => {
+    rawDiffBytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+  });
+  child.stderr?.on("data", (chunk: Buffer | string) => {
+    stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const error = new Error(
+        `git diff --patch failed${code !== null ? ` with exit code ${code}` : ""}${signal ? ` (${signal})` : ""}${stderr.trim() ? `: ${stderr.trim()}` : ""}`
+      ) as Error & { exitCode?: number | null; signal?: string | null };
+      error.exitCode = code;
+      error.signal = signal;
+      reject(error);
+    });
+  });
+
+  return rawDiffBytes;
 }
 
 async function git(repoRoot: string, args: string[]): Promise<string> {
