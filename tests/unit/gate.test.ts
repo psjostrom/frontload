@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../../src/config/config.js";
-import { evaluate } from "../../src/gate/gate.js";
+import { compactToolOutput, evaluate } from "../../src/gate/gate.js";
 
 describe("PreToolUse gate", () => {
   it("rewrites simple test commands through frontload run", () => {
@@ -36,6 +36,16 @@ describe("PreToolUse gate", () => {
     const result = evaluate({ tool_name: "Bash", tool_input: { command: "find ." } }, defaultConfig);
     expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
     expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search '.' --limit 50");
+  });
+
+  it("does not rewrite rg or fd because the index cannot preserve complete filesystem semantics", () => {
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg --files" } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg -F \"actions/checkout@v4\" ." } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "fd" } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg -n -C2 \"stale tooltip\" ." } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg --files src" } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg -F \"stale tooltip\" src" } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "fd tooltip src" } }, defaultConfig)).toBeNull();
   });
 
   it("rewrites recursive grep with the searched pattern", () => {
@@ -89,11 +99,109 @@ describe("PreToolUse gate", () => {
     const generated = evaluate({ tool_name: "Read", tool_input: { file_path: "src/__snapshots__/view.snap" } }, defaultConfig);
     const lockfile = evaluate({ tool_name: "Read", tool_input: { file_path: "pnpm-lock.yaml" } }, defaultConfig);
     expect(generated?.hookSpecificOutput.permissionDecision).toBe("deny");
-    expect(lockfile?.hookSpecificOutput.permissionDecisionReason).toContain("fl_read_budgeted");
+    expect(generated?.hookSpecificOutput.permissionDecisionReason).toContain("the agent");
+    expect(lockfile?.hookSpecificOutput.permissionDecisionReason).toContain("the agent");
   });
 
-  it("allows source reads and unknown tools", () => {
-    expect(evaluate({ tool_name: "Read", tool_input: { file_path: "src/gate/gate.ts" } }, defaultConfig)).toBeNull();
+  it("caps source read limits while preserving the tool input", () => {
+    const missing = evaluate({ tool_name: "Read", tool_input: { file_path: "src/gate/gate.ts", description: "source read" } }, defaultConfig);
+    const smaller = evaluate({ tool_name: "Read", tool_input: { file_path: "src/gate/gate.ts", limit: 50, description: "source read" } }, defaultConfig);
+    const invalid = evaluate({ tool_name: "Read", tool_input: { file_path: "src/gate/gate.ts", limit: 0, description: "source read" } }, defaultConfig);
+    const larger = evaluate({ tool_name: "Read", tool_input: { file_path: "src/gate/gate.ts", limit: 999, description: "source read" } }, defaultConfig);
+
+    expect(missing?.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(missing?.hookSpecificOutput.updatedInput).toEqual({ file_path: "src/gate/gate.ts", description: "source read", limit: 200 });
+    expect(smaller?.hookSpecificOutput.updatedInput).toEqual({ file_path: "src/gate/gate.ts", limit: 50, description: "source read" });
+    expect(invalid?.hookSpecificOutput.updatedInput).toEqual({ file_path: "src/gate/gate.ts", limit: 200, description: "source read" });
+    expect(larger?.hookSpecificOutput.updatedInput).toEqual({ file_path: "src/gate/gate.ts", limit: 200, description: "source read" });
+  });
+
+  it("compacts tool output deterministically", () => {
+    expect(() => compactToolOutput(["a"], 1)).toThrow("at least 2");
+
+    expect(compactToolOutput("abc", 10)).toEqual({
+      output: "abc",
+      originalChars: 3,
+      outputChars: 3,
+      fitsBudget: true,
+      truncated: false
+    });
+
+    expect(compactToolOutput(["a", "b"], 10)).toEqual({
+      output: ["a", "b"],
+      originalChars: JSON.stringify(["a", "b"]).length,
+      outputChars: JSON.stringify(["a", "b"]).length,
+      fitsBudget: true,
+      truncated: false
+    });
+
+    const structured = { a: 1, nested: ["x"] };
+    expect(compactToolOutput(structured, 100)).toEqual({
+      output: structured,
+      originalChars: JSON.stringify(structured).length,
+      outputChars: JSON.stringify(structured).length,
+      fitsBudget: true,
+      truncated: false
+    });
+
+    const fixture = {
+      filenames: Array.from({ length: 20 }, (_, i) => `src/path-${String(i).padStart(2, "0")}/very/long/file-name-${i}.ts`),
+      durationMs: 12,
+      numFiles: 100,
+      truncated: false
+    };
+    const compacted = compactToolOutput(fixture, 140);
+    expect(compacted.output).toMatchObject({
+      durationMs: 12,
+      numFiles: 100,
+      truncated: true
+    });
+    expect(Array.isArray((compacted.output as { filenames: unknown }).filenames)).toBe(true);
+    expect(JSON.stringify(compacted.output).length).toBeLessThanOrEqual(140);
+
+    const grepResponse = {
+      mode: "content",
+      numFiles: 3,
+      numMatches: 100,
+      content: "x".repeat(300),
+      truncated: false
+    };
+    const compactedGrep = compactToolOutput(grepResponse, 140);
+    expect(compactedGrep.fitsBudget).toBe(true);
+    expect(compactedGrep.truncated).toBe(true);
+    expect(compactedGrep.output).toMatchObject({
+      mode: "content",
+      numFiles: 3,
+      numMatches: 100,
+      truncated: true
+    });
+    expect(String((compactedGrep.output as { content: unknown }).content)).toContain("[Frontload truncated ");
+
+    const metadataOnly = {
+      durationMs: Number.MAX_SAFE_INTEGER,
+      numFiles: Number.MAX_SAFE_INTEGER,
+      truncated: false
+    };
+    const uncompactedMetadata = compactToolOutput(metadataOnly, 55);
+    expect(uncompactedMetadata.truncated).toBe(false);
+    expect(uncompactedMetadata.fitsBudget).toBe(false);
+    expect(uncompactedMetadata.output).toEqual(metadataOnly);
+
+    const keyHeavy = compactToolOutput(Object.fromEntries(
+      Array.from({ length: 100 }, (_, i) => [`flag${i}`, false])
+    ), 64);
+    expect(keyHeavy.truncated).toBe(false);
+    expect(keyHeavy.fitsBudget).toBe(false);
+    expect(Object.keys(keyHeavy.output as Record<string, unknown>)).toHaveLength(100);
+
+    const truncated = compactToolOutput("abcdefghijklmnopqrstuvwxyz".repeat(10), 64);
+    expect(truncated.truncated).toBe(true);
+    expect(typeof truncated.output).toBe("string");
+    expect(String(truncated.output)).toContain("[Frontload truncated ");
+    expect(String(truncated.output).length).toBeLessThanOrEqual(64);
+  });
+
+  it("allows unknown tools", () => {
     expect(evaluate({ tool_name: "Grep", tool_input: { pattern: "foo" } }, defaultConfig)).toBeNull();
   });
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { runPreToolUseHook } from "../src/gate/entry.js";
+import { runPostToolUseHook } from "../src/gate/entry.js";
 
 async function main(): Promise<void> {
-  const output = await runPreToolUseHook("claude");
+  const output = await runPostToolUseHook("claude");
   if (output) process.stdout.write(output);
 }
 

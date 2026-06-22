@@ -25,7 +25,9 @@ npx frontload init
 
 Choose Codex when prompted. Init merges the Frontload MCP server into the
 expected Codex config, copies the skill to `~/.codex/skills/frontload`, and
-points MCP at the installed `frontload` CLI.
+points MCP at the installed `frontload` CLI. It also merges PreToolUse and
+PostToolUse Bash hooks into `~/.codex/hooks.json`. Open `/hooks` once to review
+and trust those command hooks.
 
 For local development, build the repo and point Codex at this plugin folder.
 
@@ -42,5 +44,7 @@ When the plugin is enabled, Codex can call Frontload MCP tools for:
 - budget reports
 
 The skill tells Codex to prefer those tools before broad raw exploration.
-Codex setup is currently MCP plus skill guidance; hard enforcement depends on
-Codex hook support and is not installed by `frontload init`.
+The hooks enforce Frontload rewrites and output caps for interceptable Bash
+calls in initialized repositories. Codex does not currently expose
+Claude-equivalent native Read/Grep/Glob hook names, so native read and search
+coverage is not equivalent.

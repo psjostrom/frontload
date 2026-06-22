@@ -201,8 +201,8 @@ Without `--force`, existing files are left untouched.
 
 `init` then asks which agent adapters to configure:
 
-- `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml` and copies the Frontload skill to `~/.codex/skills/frontload`.
-- `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes the Frontload PreToolUse hook to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
+- `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and trust the hooks.
+- `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
 
 If `frontload` is not already installed globally, `init` prompts before running
 the package-manager-specific global install command. Restart the editor after
@@ -312,7 +312,7 @@ Builds the project, runs tests and e2e checks, runs the fixture demo, and writes
 
 ## Configuration
 
-`frontload.config.json` controls indexing, budgets, command allowlists, and security defaults.
+`frontload.config.json` controls indexing, budgets, command allowlists, security defaults, and gate enforcement.
 
 Example:
 
@@ -358,6 +358,13 @@ Example:
     "command": null,
     "timeoutMs": 60000,
     "maxOutputChars": 6000
+  },
+  "gate": {
+    "enabled": true,
+    "rewriteCommands": true,
+    "blockBroadShell": true,
+    "blockNoisyReads": true,
+    "maxReadLines": 200
   }
 }
 ```
@@ -425,9 +432,18 @@ npx frontload init
 ```
 
 The init command asks whether to configure Codex, Claude Code, both, or neither.
-It writes each editor's real MCP config. For Claude Code it also writes the
-Frontload gate hook into Claude settings. This is the supported user setup path
-for agent adapters.
+It writes each editor's real MCP and hook configuration. This is the supported
+user setup path for agent adapters.
+
+Host enforcement follows the hooks each editor currently exposes:
+
+| Host | PreToolUse | PostToolUse | Current limitation |
+| --- | --- | --- | --- |
+| Claude Code | Bounds Read and rewrites Bash | Bounds Grep and Glob output | Structured output is compacted without changing the native response schema |
+| Codex | Rewrites interceptable Bash | Bounds interceptable Bash output | No native Read/Grep/Glob hook parity |
+
+Codex command hooks require one review through `/hooks`. All Frontload hook
+handlers are inert unless the active repository contains `.frontload`.
 
 For local development from this repository, build first and point hosts at the
 repo plugin folders:

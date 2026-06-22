@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { execa } from "execa";
@@ -11,6 +12,51 @@ import { buildIndex } from "../../src/indexer/indexer.js";
 const fixture = path.resolve("fixtures/react-ts-app");
 
 describe("e2e proof workflow", () => {
+  it("runs host-aware hook subcommands through the built CLI", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-cli-"));
+    fs.mkdirSync(path.join(repo, ".frontload"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: { maxToolOutputChars: 200 }
+    }));
+    const cli = path.resolve("dist/src/cli/index.js");
+    const pre = await execa(
+      process.execPath,
+      [cli, "hook", "pre-tool-use", "--host", "codex"],
+      {
+        input: JSON.stringify({
+          cwd: repo,
+          tool_name: "Bash",
+          tool_input: { command: "pnpm test" }
+        })
+      }
+    );
+    const post = await execa(
+      process.execPath,
+      [cli, "hook", "post-tool-use", "--host", "codex"],
+      {
+        input: JSON.stringify({
+          cwd: repo,
+          tool_name: "Bash",
+          tool_response: "x".repeat(1000)
+        })
+      }
+    );
+
+    expect(JSON.parse(pre.stdout).hookSpecificOutput.updatedInput.command).toContain("--kind test");
+    expect(JSON.parse(post.stdout)).toMatchObject({ decision: "block" });
+  });
+
+  it("rejects missing and invalid hook hosts at the CLI boundary", async () => {
+    const cli = path.resolve("dist/src/cli/index.js");
+    const missing = await execa(process.execPath, [cli, "hook", "pre-tool-use"], { reject: false });
+    const invalid = await execa(process.execPath, [cli, "hook", "pre-tool-use", "--host", "cursor"], { reject: false });
+
+    expect(missing.exitCode).toBe(1);
+    expect(missing.stderr).toContain("required option '--host <host>' not specified");
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stderr).toContain("Unknown hook host: cursor");
+  });
+
   it("reports invalid read line options as CLI validation errors", async () => {
     const result = await execa(
       process.execPath,

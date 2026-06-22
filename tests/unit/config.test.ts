@@ -21,13 +21,25 @@ describe("config", () => {
     expect(() => loadConfig(dir)).toThrow();
   });
 
+  it("rejects tool output caps too small for structured hook output", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-config-output-cap-"));
+    fs.writeFileSync(path.join(dir, "frontload.config.json"), JSON.stringify({ budgets: { maxToolOutputChars: 1 } }));
+    expect(() => loadConfig(dir)).toThrow();
+  });
+
   it("respects ignore globs in defaults", () => {
     expect(loadConfig(process.cwd()).ignore).toContain("node_modules/**");
   });
 
   it("provides gate defaults", () => {
     const gate = loadConfig(process.cwd()).gate;
-    expect(gate).toEqual({ enabled: true, rewriteCommands: true, blockBroadShell: true, blockNoisyReads: true });
+    expect(gate).toEqual({
+      enabled: true,
+      rewriteCommands: true,
+      blockBroadShell: true,
+      blockNoisyReads: true,
+      maxReadLines: 200
+    });
   });
 
   it("allows disabling the gate via repo config", () => {
@@ -36,5 +48,11 @@ describe("config", () => {
     const gate = loadConfig(dir).gate;
     expect(gate.enabled).toBe(false);
     expect(gate.rewriteCommands).toBe(true);
+  });
+
+  it("documents gate controls in the primary README configuration example", () => {
+    const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
+    expect(readme).toContain("controls indexing, budgets, command allowlists, security defaults, and gate enforcement");
+    expect(readme).toContain('"maxReadLines": 200');
   });
 });

@@ -6,7 +6,7 @@ It bundles:
 
 - a Claude plugin manifest
 - a Frontload skill
-- a Frontload PreToolUse hook template
+- Frontload PreToolUse and PostToolUse hook templates
 
 ## Local Development
 
@@ -49,5 +49,8 @@ When the plugin is enabled, Claude Code can call Frontload MCP tools for:
 - budget reports
 
 The skill tells Claude to prefer those tools before broad raw exploration.
-The hook rewrites configured test/lint/typecheck commands through Frontload and
-blocks configured noisy reads or broad shell dumps.
+The PreToolUse hook rewrites configured test/lint/typecheck and broad shell
+commands through Frontload, caps native Read windows, and blocks configured
+noisy reads. The PostToolUse hook bounds native Grep and Glob output while
+preserving each tool's response schema. Both hooks are inert outside
+repositories containing `.frontload`.

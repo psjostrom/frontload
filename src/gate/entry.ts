@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config/config.js";
-import { evaluate } from "./gate.js";
+import { compactToolOutput, evaluate } from "./gate.js";
+
+export type HookHost = "claude" | "codex";
+
+export function parseHookHost(value: string): HookHost {
+  if (value === "claude" || value === "codex") return value;
+  throw new Error(`Unknown hook host: ${value}`);
+}
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
@@ -12,15 +19,30 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function repoRoot(payload: Record<string, unknown>): string {
+function startingDirectory(payload: Record<string, unknown>, host: HookHost): string {
   const input = payload.tool_input && typeof payload.tool_input === "object" && !Array.isArray(payload.tool_input) ? (payload.tool_input as Record<string, unknown>) : {};
+  const hostProjectDir = host === "claude" ? process.env.CLAUDE_PROJECT_DIR : process.env.CODEX_PROJECT_DIR;
   return path.resolve(
-    stringValue(process.env.CLAUDE_PROJECT_DIR) ??
-      stringValue(process.env.CODEX_PROJECT_DIR) ??
+    stringValue(hostProjectDir) ??
       stringValue(payload.cwd) ??
       stringValue(input.cwd) ??
       process.cwd()
   );
+}
+
+function initializedRoot(start: string): string | null {
+  let current = path.resolve(start);
+  try {
+    if (fs.statSync(current).isFile()) current = path.dirname(current);
+  } catch {
+    return null;
+  }
+  while (true) {
+    if (fs.existsSync(path.join(current, ".frontload"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
 function distRoot(): string {
@@ -36,15 +58,23 @@ export async function readStdin(): Promise<string> {
   });
 }
 
-export async function runPreToolUseHook(rawInput?: string): Promise<string | null> {
+function initializedConfig(payload: Record<string, unknown>, host: HookHost): { root: string; config: ReturnType<typeof loadConfig> } | null {
+  const root = initializedRoot(startingDirectory(payload, host));
+  if (!root) return null;
+  const config = loadConfig(root);
+  if (!config.gate.enabled) return null;
+  return { root, config };
+}
+
+export async function runPreToolUseHook(host: HookHost, rawInput?: string): Promise<string | null> {
   try {
     const raw = rawInput ?? (await readStdin());
     const payload = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
-    const root = repoRoot(payload);
-    if (!fs.existsSync(path.join(root, ".frontload"))) return null;
-
-    const config = loadConfig(root);
-    if (!config.gate.enabled) return null;
+    const name = stringValue(payload.tool_name);
+    if ((host === "codex" && name !== "Bash") || (host === "claude" && name !== "Bash" && name !== "Read")) return null;
+    const initialized = initializedConfig(payload, host);
+    if (!initialized) return null;
+    const { root, config } = initialized;
 
     const cli = path.join(distRoot(), "src/cli/index.js");
     const frontloadCommand = `${shellQuote(process.execPath)} ${shellQuote(cli)}`;
@@ -54,6 +84,35 @@ export async function runPreToolUseHook(rawInput?: string): Promise<string | nul
       readCommand: `${frontloadCommand} read --repo ${shellQuote(root)}`
     });
     return decision ? JSON.stringify(decision) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function runPostToolUseHook(host: HookHost, rawInput?: string): Promise<string | null> {
+  try {
+    const raw = rawInput ?? (await readStdin());
+    const payload = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const name = stringValue(payload.tool_name);
+    if ((host === "codex" && name !== "Bash") || (host === "claude" && name !== "Grep" && name !== "Glob")) return null;
+    const initialized = initializedConfig(payload, host);
+    if (!initialized || !("tool_response" in payload)) return null;
+    if (host === "codex" && typeof payload.tool_response !== "string") return null;
+
+    const compacted = compactToolOutput(payload.tool_response, initialized.config.budgets.maxToolOutputChars);
+    if (!compacted.fitsBudget || !compacted.truncated) return null;
+    if (host === "claude") {
+      return JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          updatedToolOutput: compacted.output
+        }
+      });
+    }
+    return JSON.stringify({
+      decision: "block",
+      reason: compacted.output
+    });
   } catch {
     return null;
   }

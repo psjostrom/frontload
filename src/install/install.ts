@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
 
 export type AgentName = "codex" | "claude";
 export type ConfigScope = "project" | "global";
@@ -56,15 +57,6 @@ export type McpConfigAdapter = {
 
 type InstallRunner = (command: string, args: string[], options: { stdio: "inherit" }) => unknown;
 type JsonObject = Record<string, unknown>;
-
-const CLAUDE_HOOK_EVENT = "PreToolUse";
-const CLAUDE_HOOK_MATCHER = "Read|Bash";
-const CLAUDE_HOOK_COMMAND = {
-  type: "command",
-  command: "frontload",
-  args: ["hook", "pre-tool-use"],
-  timeout: 10
-};
 
 export function packageRoot(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
@@ -263,7 +255,12 @@ function claudeSettingsPath(repoRoot: string, homeDir: string, scope: ConfigScop
 
 function isFrontloadHook(hook: unknown): boolean {
   if (!isJsonObject(hook)) return false;
-  return hook.command === CLAUDE_HOOK_COMMAND.command && sameJson(hook.args, CLAUDE_HOOK_COMMAND.args);
+  if (typeof hook.command !== "string") return false;
+  if (/\bfrontload\s+hook\s+(?:pre-tool-use|post-tool-use)(?:\s|$)/.test(hook.command)) return true;
+  return hook.command === "frontload" &&
+    Array.isArray(hook.args) &&
+    hook.args[0] === "hook" &&
+    (hook.args[1] === "pre-tool-use" || hook.args[1] === "post-tool-use");
 }
 
 function withoutFrontloadHook(group: unknown): JsonObject | null {
@@ -274,21 +271,21 @@ function withoutFrontloadHook(group: unknown): JsonObject | null {
   return { ...group, hooks };
 }
 
-function upsertClaudeGateHook(file: string, force: boolean): WriteResult {
+function upsertHookGroups(file: string, definitions: HookDefinition[], force: boolean): WriteResult {
   const existed = fs.existsSync(file);
   const current = readJson<JsonObject>(file, {});
   const hooks = isJsonObject(current.hooks) ? current.hooks : {};
-  const preToolUse = Array.isArray(hooks[CLAUDE_HOOK_EVENT]) ? hooks[CLAUDE_HOOK_EVENT] : [];
-  const nextPreToolUse = preToolUse
-    .map(withoutFrontloadHook)
-    .filter((group): group is JsonObject => group !== null)
-    .concat([{ matcher: CLAUDE_HOOK_MATCHER, hooks: [CLAUDE_HOOK_COMMAND] }]);
+  const nextHooks: JsonObject = { ...hooks };
+  for (const definition of definitions) {
+    const currentGroups: unknown[] = Array.isArray(hooks[definition.event]) ? hooks[definition.event] as unknown[] : [];
+    nextHooks[definition.event] = currentGroups
+      .map(withoutFrontloadHook)
+      .filter((group): group is JsonObject => group !== null)
+      .concat([{ matcher: definition.matcher, hooks: [definition.hook] }]);
+  }
   const next = {
     ...current,
-    hooks: {
-      ...hooks,
-      [CLAUDE_HOOK_EVENT]: nextPreToolUse
-    }
+    hooks: nextHooks
   };
 
   if (!force && sameJson(current, next)) return { path: file, action: "skipped" };
@@ -439,12 +436,18 @@ export function initProject(repoRoot: string, force = false): WriteResult[] {
 function configureCodex(homeDir = os.homedir(), force = false): InstallResult {
   const configPath = mcpConfigAdapters.codex.globalPath(homeDir);
   if (!configPath) throw new Error("Codex does not support project-local MCP config from init.");
-  const writes = [mcpConfigAdapters.codex.write(configPath, buildMcpEntry(), force)];
+  const writes = [
+    mcpConfigAdapters.codex.write(configPath, buildMcpEntry(), force),
+    upsertHookGroups(path.join(homeDir, ".codex/hooks.json"), hookDefinitions.codex, force)
+  ];
   copyFrontloadSkill("codex", homeDir, force, writes);
   return {
     agent: "codex",
     writes,
-    notes: ["Restart Codex after init completes; /mcp should show the frontload server."]
+    notes: [
+      "Restart Codex after init completes; /mcp should show the frontload server.",
+      "Open /hooks once to review and trust the Frontload command hooks."
+    ]
   };
 }
 
@@ -453,7 +456,7 @@ function configureClaude(repoRoot: string, homeDir = os.homedir(), force = false
   if (!configPath) throw new Error(`Claude Code does not support ${scope} MCP config from init.`);
   const writes = [
     mcpConfigAdapters.claude.write(configPath, buildMcpEntry(), force),
-    upsertClaudeGateHook(claudeSettingsPath(repoRoot, homeDir, scope), force)
+    upsertHookGroups(claudeSettingsPath(repoRoot, homeDir, scope), hookDefinitions.claude, force)
   ];
   copyFrontloadSkill("claude", homeDir, force, writes);
   return {

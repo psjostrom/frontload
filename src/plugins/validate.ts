@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { hookConfigFor, type HookHost } from "../hooks/definitions.js";
 
 const authorSchema = z.object({
   name: z.string().min(1),
@@ -90,13 +91,18 @@ function assertSkill(file: string): void {
   if (body.length < 40) throw new Error(`Skill body is too short: ${file}`);
 }
 
-function assertFrontloadHook(config: HooksConfig, host: "codex" | "claude", file: string): void {
-  const commandHooks = Object.values(config.hooks).flatMap((groups) => groups.flatMap((group) => group.hooks));
-  const frontloadHook = host === "claude"
-    ? commandHooks.find((hook) => hook.command === "frontload" && JSON.stringify(hook.args) === JSON.stringify(["hook", "pre-tool-use"]))
-    : commandHooks.find((hook) => hook.command === "frontload hook pre-tool-use" && !hook.args);
-  if (!frontloadHook) {
-    throw new Error(`${file} must define the ${host} Frontload pre-tool-use hook command`);
+function assertFrontloadHook(config: HooksConfig, host: HookHost, file: string): void {
+  const expected = hookConfigFor(host).hooks;
+  for (const event of ["PreToolUse", "PostToolUse"] as const) {
+    const expectedGroup = expected[event][0];
+    const expectedHook = expectedGroup.hooks[0];
+    const found = (config.hooks[event] ?? []).some((group) =>
+      group.matcher === expectedGroup.matcher &&
+      group.hooks.some((hook) => JSON.stringify(hook) === JSON.stringify(expectedHook))
+    );
+    if (!found) {
+      throw new Error(`${file} must define the ${host} Frontload ${event} hook command`);
+    }
   }
 }
 

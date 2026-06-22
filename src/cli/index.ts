@@ -12,7 +12,7 @@ import { runSummary } from "../commands/run.js";
 import { generateDossier, searchIndex } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
-import { runPreToolUseHook } from "../gate/entry.js";
+import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
 import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
@@ -210,8 +210,13 @@ program.command("compare-cost").option("--repo <repo>", "repository root", ".").
 
 program.command("budget").option("--repo <repo>", "repository root", ".").action((opts) => print(budgetReport(resolveRepo(opts.repo))));
 program.command("validate-plugins").option("--repo <repo>", "repository root", ".").action((opts) => print(validateBundledPlugins(resolveRepo(opts.repo))));
-program.command("hook").command("pre-tool-use").action(async () => {
-  const output = await runPreToolUseHook();
+const hook = program.command("hook");
+hook.command("pre-tool-use").requiredOption("--host <host>").action(async (opts) => {
+  const output = await runPreToolUseHook(parseHookHost(opts.host));
+  if (output) process.stdout.write(output);
+});
+hook.command("post-tool-use").requiredOption("--host <host>").action(async (opts) => {
+  const output = await runPostToolUseHook(parseHookHost(opts.host));
   if (output) process.stdout.write(output);
 });
 program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => startMcp(resolveRepo(opts.repo)));
