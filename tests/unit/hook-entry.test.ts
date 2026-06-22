@@ -62,6 +62,33 @@ describe("hook entry adapters", () => {
     expect(JSON.stringify(result.hookSpecificOutput.updatedToolOutput).length).toBeLessThanOrEqual(500);
   });
 
+  it("compacts Claude Grep content without changing scalar metadata", async () => {
+    const repo = initializedRepo();
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: { maxToolOutputChars: 180 }
+    }));
+    const payload = JSON.stringify({
+      cwd: repo,
+      tool_name: "Grep",
+      tool_response: {
+        mode: "content",
+        numFiles: 3,
+        numMatches: 100,
+        content: "match\n".repeat(100),
+        truncated: false
+      }
+    });
+
+    const result = JSON.parse((await runPostToolUseHook("claude", payload))!);
+    expect(result.hookSpecificOutput.updatedToolOutput).toMatchObject({
+      mode: "content",
+      numFiles: 3,
+      numMatches: 100,
+      truncated: true
+    });
+    expect(JSON.stringify(result.hookSpecificOutput.updatedToolOutput).length).toBeLessThanOrEqual(180);
+  });
+
   it("replaces oversized Codex Bash output", async () => {
     const repo = initializedRepo();
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
@@ -116,6 +143,35 @@ describe("hook entry adapters", () => {
     });
 
     expect(await runPreToolUseHook("claude", payload)).not.toBeNull();
+  });
+
+  it("uses only the selected host project directory when host environments conflict", async () => {
+    const claudeRepo = initializedRepo();
+    const codexRepo = initializedRepo();
+    const previousClaude = process.env.CLAUDE_PROJECT_DIR;
+    const previousCodex = process.env.CODEX_PROJECT_DIR;
+    process.env.CLAUDE_PROJECT_DIR = claudeRepo;
+    process.env.CODEX_PROJECT_DIR = codexRepo;
+
+    try {
+      const payload = JSON.stringify({
+        cwd: fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-payload-cwd-")),
+        tool_name: "Bash",
+        tool_input: { command: "pnpm test" }
+      });
+      const claude = JSON.parse((await runPreToolUseHook("claude", payload))!);
+      const codex = JSON.parse((await runPreToolUseHook("codex", payload))!);
+
+      expect(claude.hookSpecificOutput.updatedInput.command).toContain(claudeRepo);
+      expect(claude.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
+      expect(codex.hookSpecificOutput.updatedInput.command).toContain(codexRepo);
+      expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(claudeRepo);
+    } finally {
+      if (previousClaude === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+      else process.env.CLAUDE_PROJECT_DIR = previousClaude;
+      if (previousCodex === undefined) delete process.env.CODEX_PROJECT_DIR;
+      else process.env.CODEX_PROJECT_DIR = previousCodex;
+    }
   });
 
   it("does not emit an invalid replacement when structured output cannot fit", async () => {

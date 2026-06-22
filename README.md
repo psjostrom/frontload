@@ -312,7 +312,7 @@ Builds the project, runs tests and e2e checks, runs the fixture demo, and writes
 
 ## Configuration
 
-`frontload.config.json` controls indexing, budgets, command allowlists, and security defaults.
+`frontload.config.json` controls indexing, budgets, command allowlists, security defaults, and gate enforcement.
 
 Example:
 
@@ -358,6 +358,13 @@ Example:
     "command": null,
     "timeoutMs": 60000,
     "maxOutputChars": 6000
+  },
+  "gate": {
+    "enabled": true,
+    "rewriteCommands": true,
+    "blockBroadShell": true,
+    "blockNoisyReads": true,
+    "maxReadLines": 200
   }
 }
 ```

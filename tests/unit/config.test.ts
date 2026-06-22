@@ -49,4 +49,10 @@ describe("config", () => {
     expect(gate.enabled).toBe(false);
     expect(gate.rewriteCommands).toBe(true);
   });
+
+  it("documents gate controls in the primary README configuration example", () => {
+    const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
+    expect(readme).toContain("controls indexing, budgets, command allowlists, security defaults, and gate enforcement");
+    expect(readme).toContain('"maxReadLines": 200');
+  });
 });

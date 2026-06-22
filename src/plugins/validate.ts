@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { hookConfigFor, type HookHost } from "../hooks/definitions.js";
 
 const authorSchema = z.object({
   name: z.string().min(1),
@@ -90,32 +91,19 @@ function assertSkill(file: string): void {
   if (body.length < 40) throw new Error(`Skill body is too short: ${file}`);
 }
 
-function assertFrontloadHook(config: HooksConfig, host: "codex" | "claude", file: string): void {
-  const expected = host === "claude"
-    ? {
-        PreToolUse: { matcher: "Read|Bash", command: "frontload", args: ["hook", "pre-tool-use", "--host", "claude"] },
-        PostToolUse: { matcher: "Grep|Glob", command: "frontload", args: ["hook", "post-tool-use", "--host", "claude"] }
-      }
-    : {
-        PreToolUse: { matcher: "^Bash$", command: "frontload hook pre-tool-use --host codex", args: undefined },
-        PostToolUse: { matcher: "^Bash$", command: "frontload hook post-tool-use --host codex", args: undefined }
-      };
-
+function assertFrontloadHook(config: HooksConfig, host: HookHost, file: string): void {
+  const expected = hookConfigFor(host).hooks;
   for (const event of ["PreToolUse", "PostToolUse"] as const) {
+    const expectedGroup = expected[event][0];
+    const expectedHook = expectedGroup.hooks[0];
     const found = (config.hooks[event] ?? []).some((group) =>
-      group.matcher === expected[event].matcher &&
-      group.hooks.some((hook) =>
-        hook.command === expected[event].command && sameStringArray(hook.args, expected[event].args)
-      )
+      group.matcher === expectedGroup.matcher &&
+      group.hooks.some((hook) => JSON.stringify(hook) === JSON.stringify(expectedHook))
     );
     if (!found) {
       throw new Error(`${file} must define the ${host} Frontload ${event} hook command`);
     }
   }
-}
-
-function sameStringArray(left: string[] | undefined, right: string[] | undefined): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export function validatePlugin(root: string, host: "codex" | "claude"): PluginValidationResult {

@@ -15,9 +15,11 @@
 - Modify `src/config/config.ts` and `frontload.config.example.json`
   - Add `gate.maxReadLines`.
 - Modify `src/gate/gate.ts`
-  - Bound Read input, add safe `rg`/`fd` rewrites, and expose output compaction.
+  - Bound Read input, preserve full `rg`/`fd` semantics, and expose output compaction.
 - Modify `src/gate/entry.ts`
   - Add explicit host handling and PostToolUse serialization.
+- Create `src/hooks/definitions.ts`
+  - Define canonical host hook commands, matchers, timeouts, and status messages.
 - Modify `src/cli/index.ts`
   - Add `--host` to both hook commands.
 - Modify `hooks/pre-tool-use.ts` and create `hooks/post-tool-use.ts`
@@ -60,12 +62,12 @@ expect(bounded?.hookSpecificOutput.updatedInput).toEqual({
 expect(evaluate(
   { tool_name: "Bash", tool_input: { command: "rg --files" } },
   defaultConfig
-)?.hookSpecificOutput.updatedInput?.command).toBe("frontload search '.' --limit 50");
+)).toBeNull();
 
 expect(evaluate(
-  { tool_name: "Bash", tool_input: { command: "rg -F 'needle' src" } },
+  { tool_name: "Bash", tool_input: { command: "rg -F 'needle' ." } },
   defaultConfig
-)?.hookSpecificOutput.updatedInput?.command).toBe("frontload search 'needle' --limit 20");
+)).toBeNull();
 
 expect(evaluate(
   { tool_name: "Bash", tool_input: { command: "rg 'needle.*value' src" } },
@@ -114,8 +116,8 @@ Run:
 pnpm vitest run tests/unit/config.test.ts tests/unit/gate.test.ts
 ```
 
-Expected: failures for missing `maxReadLines`, missing Read rewrite, missing
-`rg`/`fd` rewrites, and missing `compactToolOutput`.
+Expected: failures for missing `maxReadLines`, missing Read rewrite, and missing
+`compactToolOutput`.
 
 - [ ] **Step 3: Implement the minimal shared policy**
 
@@ -146,8 +148,10 @@ updatedInput: {
 }
 ```
 
-Implement `rg` and `fd` parsing with `shellWords`. Rewrite only the
-whole-repository forms described by the design; path-scoped forms pass through.
+Do not rewrite `rg` or `fd` through the Frontload index. The index intentionally
+excludes configured extensions, large files, and ignored paths, so it cannot
+preserve the complete filesystem semantics of either command. Let host
+PostToolUse enforcement bound their observed output instead.
 Export:
 
 ```ts
@@ -163,14 +167,13 @@ export function compactToolOutput(value: unknown, maxChars: number): CompactedTo
 ```
 
 Strings remain strings. Arrays remain arrays. Plain objects retain their keys
-and scalar field types while oversized string leaves or trailing result entries
-are reduced. If a compacted object has a boolean `truncated` property, set it
-to `true`. Numeric fields remain unchanged while array/string reduction is
-enough; if metadata alone exceeds the cap, oversized numeric metadata may be
-reduced to zero as a final same-type fallback. If the minimized native schema
-still does not fit, return `fitsBudget: false` so the host adapter fails open
-instead of emitting an invalid replacement. Unknown non-JSON values are
-returned unchanged.
+and scalar metadata values while trailing result entries and known payload
+fields such as `content`, `text`, and `output` are reduced. If a compacted
+object has a boolean `truncated` property, set it to `true`. Never alter enum,
+count, duration, or other scalar metadata to satisfy the cap. If the minimized
+native schema still does not fit, return `fitsBudget: false` so the host adapter
+fails open instead of emitting an invalid replacement. Unknown non-JSON values
+are returned unchanged.
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 
@@ -341,7 +344,8 @@ Expected: failures because Codex hooks and Claude PostToolUse are not installed.
 
 - [ ] **Step 3: Implement generic JSON hook upsert**
 
-Define host hook constants and a helper with this contract:
+Define canonical host hook metadata in `src/hooks/definitions.ts`, then consume
+it from the installer through a helper with this contract:
 
 ```ts
 function upsertHookGroups(

@@ -220,54 +220,9 @@ function lockfilePath(command: string): string | null {
   return parts.slice(1).find((part) => /^(?:\.\/)?(?:pnpm-lock\.yaml|package-lock\.json|yarn\.lock)$/.test(part)) ?? null;
 }
 
-function rgDecision(command: string, options: GateOptions): { decision: "allow"; reason: string; command: string } | null {
-  const parts = shellWords(command);
-  if (parts[0] !== "rg") return null;
-  const search = options.searchCommand ?? "frontload search";
-
-  if (parts[1] === "--files") {
-    const rest = parts.slice(2);
-    if (rest.length > 0) return null;
-    return {
-      decision: "allow",
-      reason: "Rewrote broad ripgrep inventory through Frontload search so the agent receives bounded indexed results.",
-      command: `${search} ${shellQuote(".")} --limit 50`
-    };
-  }
-
-  const fixedFlag = parts.findIndex((part) => part === "-F" || part === "--fixed-strings");
-  if (fixedFlag === -1) return null;
-  if (parts.slice(1).some((part, index) => index + 1 !== fixedFlag && part.startsWith("-"))) return null;
-  const pattern = parts[fixedFlag + 1];
-  const trailing = parts.slice(fixedFlag + 2);
-  if (!pattern || trailing.length > 1 || (trailing.length === 1 && trailing[0] !== ".")) return null;
-  return {
-    decision: "allow",
-    reason: "Rewrote broad literal ripgrep through Frontload search so the agent receives bounded indexed results.",
-    command: `${search} ${shellQuote(pattern)} --limit 20`
-  };
-}
-
-function fdDecision(command: string, options: GateOptions): { decision: "allow"; reason: string; command: string } | null {
-  const parts = shellWords(command);
-  if (parts[0] !== "fd") return null;
-  const rest = parts.slice(1);
-  if (rest.length > 0) return null;
-  const search = options.searchCommand ?? "frontload search";
-  return {
-    decision: "allow",
-    reason: "Rewrote broad fd inventory through Frontload search so the agent receives bounded indexed results.",
-    command: `${search} ${shellQuote(".")} --limit 50`
-  };
-}
-
 function broadShellDecision(command: string, options: GateOptions): { decision: "allow"; reason: string; command: string } | { decision: "deny"; reason: string } | null {
   const search = options.searchCommand ?? "frontload search";
   const read = options.readCommand ?? "frontload read";
-  const ripgrep = rgDecision(command, options);
-  if (ripgrep) return ripgrep;
-  const fd = fdDecision(command, options);
-  if (fd) return fd;
   const grep = grepAnalysis(command);
   if (grep?.recursive && grep.unsupported) {
     return {
@@ -352,50 +307,45 @@ function jsonClone(value: unknown): unknown {
 
 type ArrayCandidate = { value: unknown[] };
 type StringCandidate = { parent: Record<string, unknown> | unknown[]; key: string | number; value: string };
-type NumberCandidate = { parent: Record<string, unknown> | unknown[]; key: string | number; value: number };
+const payloadStringFields = new Set(["content", "output", "text"]);
 
 function reductionCandidates(
   value: unknown,
   arrays: ArrayCandidate[],
   strings: StringCandidate[],
-  numbers: NumberCandidate[],
   parent?: Record<string, unknown> | unknown[],
   key?: string | number
 ): void {
   if (typeof value === "string") {
-    if (parent !== undefined && key !== undefined && value.length > 0) strings.push({ parent, key, value });
-    return;
-  }
-  if (typeof value === "number") {
-    if (parent !== undefined && key !== undefined && String(value).length > 1) numbers.push({ parent, key, value });
+    if (parent !== undefined && typeof key === "string" && payloadStringFields.has(key) && value.length > 0) {
+      strings.push({ parent, key, value });
+    }
     return;
   }
   if (Array.isArray(value)) {
     if (value.length > 0) arrays.push({ value });
-    value.forEach((item, index) => reductionCandidates(item, arrays, strings, numbers, value, index));
+    value.forEach((item, index) => reductionCandidates(item, arrays, strings, value, index));
     return;
   }
   if (!value || typeof value !== "object") return;
   for (const [field, nested] of Object.entries(value)) {
-    reductionCandidates(nested, arrays, strings, numbers, value as Record<string, unknown>, field);
+    reductionCandidates(nested, arrays, strings, value as Record<string, unknown>, field);
   }
 }
 
 function compactStructured(value: unknown, maxChars: number): unknown {
   const output = jsonClone(value);
   if (!output || typeof output !== "object") return output;
-  if (!Array.isArray(output) && typeof (output as Record<string, unknown>).truncated === "boolean") {
-    (output as Record<string, unknown>).truncated = true;
-  }
+  let reduced = false;
 
   while (serializedChars(output) > maxChars) {
     const arrays: ArrayCandidate[] = [];
     const strings: StringCandidate[] = [];
-    const numbers: NumberCandidate[] = [];
-    reductionCandidates(output, arrays, strings, numbers);
+    reductionCandidates(output, arrays, strings);
     const array = arrays.sort((left, right) => right.value.length - left.value.length)[0];
     if (array) {
       array.value.pop();
+      reduced = true;
       continue;
     }
     const string = strings.sort((left, right) => right.value.length - left.value.length)[0];
@@ -403,11 +353,13 @@ function compactStructured(value: unknown, maxChars: number): unknown {
       const excess = serializedChars(output) - maxChars;
       const nextLength = Math.max(0, string.value.length - Math.max(1, excess));
       string.parent[string.key as never] = compactString(string.value, nextLength) as never;
+      reduced = true;
       continue;
     }
-    const number = numbers.sort((left, right) => String(right.value).length - String(left.value).length)[0];
-    if (!number) break;
-    number.parent[number.key as never] = 0 as never;
+    break;
+  }
+  if (reduced && !Array.isArray(output) && typeof (output as Record<string, unknown>).truncated === "boolean") {
+    (output as Record<string, unknown>).truncated = true;
   }
   return output;
 }

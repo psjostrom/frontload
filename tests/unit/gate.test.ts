@@ -38,27 +38,10 @@ describe("PreToolUse gate", () => {
     expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search '.' --limit 50");
   });
 
-  it("rewrites whole-repo rg file inventories through the configured search command", () => {
-    const result = evaluate({ tool_name: "Bash", tool_input: { command: "rg --files" } }, defaultConfig, {
-      searchCommand: "node dist/src/cli/index.js search --repo /tmp/repo"
-    });
-    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
-    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("node dist/src/cli/index.js search --repo /tmp/repo '.' --limit 50");
-  });
-
-  it("rewrites simple literal rg searches through Frontload search", () => {
-    const result = evaluate({ tool_name: "Bash", tool_input: { command: "rg -F \"stale tooltip\" ." } }, defaultConfig);
-    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
-    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search 'stale tooltip' --limit 20");
-  });
-
-  it("rewrites whole-repo fd inventories through Frontload search", () => {
-    const result = evaluate({ tool_name: "Bash", tool_input: { command: "fd" } }, defaultConfig);
-    expect(result?.hookSpecificOutput.permissionDecision).toBe("allow");
-    expect(result?.hookSpecificOutput.updatedInput?.command).toBe("frontload search '.' --limit 50");
-  });
-
-  it("does not rewrite scoped or semantics-changing rg and fd searches", () => {
+  it("does not rewrite rg or fd because the index cannot preserve complete filesystem semantics", () => {
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg --files" } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg -F \"actions/checkout@v4\" ." } }, defaultConfig)).toBeNull();
+    expect(evaluate({ tool_name: "Bash", tool_input: { command: "fd" } }, defaultConfig)).toBeNull();
     expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg -n -C2 \"stale tooltip\" ." } }, defaultConfig)).toBeNull();
     expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg --files src" } }, defaultConfig)).toBeNull();
     expect(evaluate({ tool_name: "Bash", tool_input: { command: "rg -F \"stale tooltip\" src" } }, defaultConfig)).toBeNull();
@@ -176,16 +159,33 @@ describe("PreToolUse gate", () => {
     expect(Array.isArray((compacted.output as { filenames: unknown }).filenames)).toBe(true);
     expect(JSON.stringify(compacted.output).length).toBeLessThanOrEqual(140);
 
-    const metadataOnly = compactToolOutput({
+    const grepResponse = {
+      mode: "content",
+      numFiles: 3,
+      numMatches: 100,
+      content: "x".repeat(300),
+      truncated: false
+    };
+    const compactedGrep = compactToolOutput(grepResponse, 140);
+    expect(compactedGrep.fitsBudget).toBe(true);
+    expect(compactedGrep.truncated).toBe(true);
+    expect(compactedGrep.output).toMatchObject({
+      mode: "content",
+      numFiles: 3,
+      numMatches: 100,
+      truncated: true
+    });
+    expect(String((compactedGrep.output as { content: unknown }).content)).toContain("[Frontload truncated ");
+
+    const metadataOnly = {
       durationMs: Number.MAX_SAFE_INTEGER,
       numFiles: Number.MAX_SAFE_INTEGER,
       truncated: false
-    }, 55);
-    expect(metadataOnly.truncated).toBe(true);
-    expect(metadataOnly.outputChars).toBeLessThanOrEqual(55);
-    expect(metadataOnly.output).toMatchObject({
-      truncated: true
-    });
+    };
+    const uncompactedMetadata = compactToolOutput(metadataOnly, 55);
+    expect(uncompactedMetadata.truncated).toBe(false);
+    expect(uncompactedMetadata.fitsBudget).toBe(false);
+    expect(uncompactedMetadata.output).toEqual(metadataOnly);
 
     const keyHeavy = compactToolOutput(Object.fromEntries(
       Array.from({ length: 100 }, (_, i) => [`flag${i}`, false])

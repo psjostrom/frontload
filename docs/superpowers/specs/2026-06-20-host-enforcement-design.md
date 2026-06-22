@@ -48,10 +48,11 @@ Claude supports the required native-tool lifecycle:
 - `PostToolUse` for `Grep|Glob` returns `updatedToolOutput`;
 - output compaction preserves the native response schema. Strings remain
   strings, arrays remain arrays, and object keys/scalar types remain intact.
-  Oversized string leaves and trailing result entries are reduced; an existing
-  boolean `truncated` field is set to `true`. If the native response's minimum
-  schema cannot fit the configured budget, the hook fails open rather than
-  emitting an invalid replacement that Claude would ignore.
+  Trailing result entries and known payload fields are reduced; enum, count,
+  duration, and other scalar metadata remain unchanged. An existing boolean
+  `truncated` field is set to `true`. If the native response's minimum schema
+  cannot fit the configured budget, the hook fails open rather than emitting an
+  invalid replacement that Claude would ignore.
 
 ### Codex
 
@@ -113,17 +114,11 @@ All entry points fail open on malformed input or runtime errors.
 
 ## Shell Rewrite Expansion
 
-Codex commonly uses ripgrep and fd. Add only whole-repository rewrites:
-
-- argument-free `rg --files` becomes a bounded Frontload inventory search;
-- `rg -F <literal>` and `rg -F <literal> .` become bounded Frontload literal
-  searches;
-- argument-free `fd` becomes a bounded Frontload inventory search.
-
-Regex, context, replacement, JSON, files-with-matches, path-scoped searches, and
-other result-shape flags are not rewritten because Frontload cannot preserve
-their semantics. They execute normally and remain subject to the PostToolUse
-output cap when the host exposes that hook.
+Codex commonly uses ripgrep and fd, but Frontload's index intentionally excludes
+configured extensions, oversized files, and ignored paths. Rewriting `rg` or
+`fd` through that index would therefore change which files and matches exist.
+Leave all `rg` and `fd` commands unchanged and rely on PostToolUse output
+bounding when the host exposes that hook.
 
 ## Installation
 
@@ -144,6 +139,10 @@ The checked-in `plugins/claude/hooks/hooks.json`,
 explicit `--host` commands as init-generated configuration. Plugin validation
 therefore tests the configuration users actually receive.
 
+`src/hooks/definitions.ts` is the canonical source for host hook commands,
+matchers, timeouts, arguments, and status messages. Installation consumes those
+definitions directly, while validation checks bundled hook JSON against them.
+
 ## Documentation Contract
 
 The README, Codex setup, and plugin READMEs must state:
@@ -160,7 +159,7 @@ Unit tests cover:
 
 - bounded Claude Read input;
 - noisy-read denial remains intact;
-- safe `rg` and `fd` rewrites and unsafe pass-through;
+- complete `rg` and `fd` pass-through without index-based semantic loss;
 - shape-preserving Claude output compaction for string, array, and structured
   native-tool fixtures;
 - Codex oversized-output replacement;
