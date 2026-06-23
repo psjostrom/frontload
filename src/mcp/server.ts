@@ -1,28 +1,175 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
 import { execa } from "execa";
-import { budgetReport } from "../budget/events.js";
-import { loadConfig } from "../config/config.js";
+import { z } from "zod";
+import { appendEvent, budgetReport, outputSize, outputText } from "../budget/events.js";
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
-import { generateDossier, searchIndex } from "../dossier/dossier.js";
+import { loadConfig } from "../config/config.js";
+import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
+import { BaselineKind, CommandSummary } from "../types.js";
 
-function json(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+export type McpTextResponse = {
+  content: Array<{ type: "text"; text: string }>;
+};
+
+type MeasuredMcpResult = {
+  data: unknown;
+  baseline?: { bytes: number; kind: BaselineKind };
+};
+
+type ReadInput = {
+  path: string;
+  query?: string;
+  budgetChars: number;
+  startLine?: number;
+  lineCount?: number;
+};
+
+function json(data: unknown): McpTextResponse {
+  return { content: [{ type: "text", text: outputText(data) }] };
+}
+
+async function measuredMcp<TInput>(
+  repoRoot: string,
+  operation: string,
+  input: TInput,
+  fn: () => Promise<MeasuredMcpResult> | MeasuredMcpResult
+): Promise<McpTextResponse> {
+  const start = Date.now();
+  let success = false;
+  let outputChars = 0;
+  let outputBytes = 0;
+  let baseline: MeasuredMcpResult["baseline"];
+  try {
+    const result = await fn();
+    const size = outputSize(result.data);
+    success = true;
+    outputChars = size.chars;
+    outputBytes = size.bytes;
+    baseline = result.baseline;
+    return json(result.data);
+  } finally {
+    try {
+      appendEvent(repoRoot, {
+        source: "mcp",
+        operation,
+        inputChars: JSON.stringify(input).length,
+        outputChars,
+        outputBytes,
+        ...(baseline ? { baselineBytes: baseline.bytes, baselineKind: baseline.kind } : {}),
+        durationMs: Date.now() - start,
+        success
+      });
+    } catch {
+      // Fail open: accounting must never block the tool response or mask the original error.
+    }
+  }
+}
+
+export function createMcpHandlers(repoRoot: string) {
+  return {
+    policy: async (_input: Record<string, never>): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "policy", {}, () => {
+        const config = loadConfig(repoRoot);
+        return {
+          data: {
+            summary: "Current Frontload policy.",
+            budgets: config.budgets,
+            allowedCommands: config.commands.allowed,
+            localScout: config.localScout
+          }
+        };
+      }),
+
+    index: async (input: { force?: boolean }): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "index", input, async () => ({
+        data: { summary: "Repository index refreshed.", index: await buildIndex(repoRoot) }
+      })),
+
+    dossier: async (input: { task: string; budgetChars: number; maxFiles: number }): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "dossier", input, async () => ({
+        data: {
+          summary: "Dossier generated.",
+          ...(await generateDossier(repoRoot, input.task, input.budgetChars, input.maxFiles))
+        }
+      })),
+
+    search: async (input: { query: string; limit: number }): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "search", input, async () => {
+        const measured = await searchIndexMeasured(repoRoot, input.query, input.limit);
+        const data = { summary: "Search results from index.", results: measured.results };
+        return {
+          data,
+          baseline: {
+            bytes: outputSize({ summary: "Search results from index.", results: measured.unboundedResults }).bytes,
+            kind: "unbounded-search-results"
+          }
+        };
+      }),
+
+    read: async (input: ReadInput): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "read", input, () => {
+        const data = readBudgeted(repoRoot, input.path, {
+          budgetChars: input.budgetChars,
+          query: input.query,
+          startLine: input.startLine,
+          lineCount: input.lineCount
+        });
+        return { data, baseline: { bytes: data.fileSize, kind: "full-file" } };
+      }),
+
+    run: async (input: { kind: CommandSummary["kind"]; command: string }): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "run", input, async () => {
+        const data = await runSummary(repoRoot, input.kind, input.command.split(/\s+/));
+        return { data, baseline: { bytes: data.rawOutputBytes, kind: "raw-command-output" } };
+      }),
+
+    diff: async (input: { staged: boolean }): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "diff", input, async () => {
+        const data = await gitDiffSummary(repoRoot, input.staged);
+        return { data, baseline: { bytes: data.rawDiffBytes, kind: "raw-diff" } };
+      }),
+
+    budget: async (_input: Record<string, never>): Promise<McpTextResponse> => json(budgetReport(repoRoot)),
+
+    localScout: async (input: { prompt: string }): Promise<McpTextResponse> =>
+      measuredMcp(repoRoot, "local-scout", input, async () => {
+        const config = loadConfig(repoRoot);
+        if (!config.localScout.enabled || !config.localScout.command) {
+          return { data: { enabled: false, summary: "Local scout is disabled. Configure localScout.command to enable it." } };
+        }
+        const result = await execa("sh", ["-lc", config.localScout.command], {
+          cwd: repoRoot,
+          input: input.prompt,
+          timeout: config.localScout.timeoutMs,
+          all: true,
+          stripFinalNewline: false,
+          reject: false
+        });
+        const rawOutput = result.all ?? "";
+        return {
+          data: {
+            enabled: true,
+            summary: "Local scout command completed.",
+            exitCode: result.exitCode,
+            output: rawOutput.slice(0, config.localScout.maxOutputChars)
+          },
+          baseline: { bytes: Buffer.byteLength(rawOutput), kind: "raw-local-scout-output" }
+        };
+      })
+  };
 }
 
 export async function startMcp(repoRoot: string): Promise<void> {
   const server = new McpServer({ name: "frontload", version: "0.1.5" });
-  server.tool("fl_policy", "Return current budget and command policy. Use before running costly commands; do not use for source exploration.", {}, async () => {
-    const config = loadConfig(repoRoot);
-    return json({ summary: "Current Frontload policy.", budgets: config.budgets, allowedCommands: config.commands.allowed, localScout: config.localScout });
-  });
-  server.tool("fl_repo_index", "Build or refresh the repo index. Use before dossiers/search; not needed before every read.", { force: z.boolean().optional() }, async () => json({ summary: "Repository index refreshed.", index: await buildIndex(repoRoot) }));
-  server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().default(12000), maxFiles: z.number().default(12) }, async ({ task, budgetChars, maxFiles }) => json({ summary: "Dossier generated.", ...(await generateDossier(repoRoot, task, budgetChars, maxFiles)) }));
-  server.tool("fl_search", "Search indexed files by task terms and bounded literal content matches. Use instead of broad grep; not a full regex engine.", { query: z.string(), limit: z.number().default(10) }, async ({ query, limit }) => json({ summary: "Search results from index.", results: await searchIndex(repoRoot, query, limit) }));
+  const handlers = createMcpHandlers(repoRoot);
+  server.tool("fl_policy", "Return current budget and command policy. Use before running costly commands; do not use for source exploration.", {}, handlers.policy);
+  server.tool("fl_repo_index", "Build or refresh the repo index. Use before dossiers/search; not needed before every read.", { force: z.boolean().optional() }, handlers.index);
+  server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().default(12000), maxFiles: z.number().default(12) }, handlers.dossier);
+  server.tool("fl_search", "Search indexed files by task terms and bounded literal content matches. Use instead of broad grep; not a full regex engine.", { query: z.string(), limit: z.number().default(10) }, handlers.search);
   server.tool(
     "fl_read_budgeted",
     "Read a contiguous, bounded file excerpt. The `excerpt` field is edit-safe when `editSafe` is true; use `numberedExcerpt` for line-number display.",
@@ -33,22 +180,11 @@ export async function startMcp(repoRoot: string): Promise<void> {
       startLine: z.number().int().positive().optional(),
       lineCount: z.number().int().positive().optional()
     },
-    async (input) => json(readBudgeted(repoRoot, input.path, {
-      budgetChars: input.budgetChars,
-      query: input.query,
-      startLine: input.startLine,
-      lineCount: input.lineCount
-    }))
+    handlers.read
   );
-  server.tool("fl_run_summary", "Run an allowed command and return a summary. Use for tests/typechecks/lint; do not use for interactive commands.", { kind: z.enum(["test", "typecheck", "lint", "generic"]).default("generic"), command: z.string() }, async ({ kind, command }) => json(await runSummary(repoRoot, kind, command.split(/\s+/))));
-  server.tool("fl_git_diff_summary", "Summarize git diff. Use instead of dumping full diffs; not for applying patches.", { staged: z.boolean().default(false) }, async ({ staged }) => json(await gitDiffSummary(repoRoot, staged)));
-  server.tool("fl_budget_report", "Return budget event totals. Use before/after large work; not a profiler.", {}, async () => json(budgetReport(repoRoot)));
-  server.tool("fl_local_scout", "Optional local model extension point. Use only when configured; do not expect network LLMs.", { prompt: z.string() }, async ({ prompt }) => {
-    const config = loadConfig(repoRoot);
-    if (!config.localScout.enabled || !config.localScout.command) return json({ enabled: false, summary: "Local scout is disabled. Configure localScout.command to enable it." });
-    const result = await execa("sh", ["-lc", config.localScout.command], { cwd: repoRoot, input: prompt, timeout: config.localScout.timeoutMs, reject: false });
-    const output = (result.stdout || result.stderr).slice(0, config.localScout.maxOutputChars);
-    return json({ enabled: true, summary: "Local scout command completed.", exitCode: result.exitCode, output });
-  });
+  server.tool("fl_run_summary", "Run an allowed command and return a summary. Use for tests/typechecks/lint; do not use for interactive commands.", { kind: z.enum(["test", "typecheck", "lint", "generic"]).default("generic"), command: z.string() }, handlers.run);
+  server.tool("fl_git_diff_summary", "Summarize git diff. Use instead of dumping full diffs; not for applying patches.", { staged: z.boolean().default(false) }, handlers.diff);
+  server.tool("fl_budget_report", "Return budget event totals. Use before/after large work; not a profiler.", {}, handlers.budget);
+  server.tool("fl_local_scout", "Optional local model extension point. Use only when configured; do not expect network LLMs.", { prompt: z.string() }, handlers.localScout);
   await server.connect(new StdioServerTransport());
 }

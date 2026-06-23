@@ -5,40 +5,69 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { Command } from "commander";
-import { appendEvent, budgetReport } from "../budget/events.js";
+import { appendEvent, budgetReport, outputSize } from "../budget/events.js";
 import { loadConfig } from "../config/config.js";
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
-import { generateDossier, searchIndex } from "../dossier/dossier.js";
+import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
 import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
+import { BaselineKind } from "../types.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
 import { parsePositiveInteger } from "./options.js";
 
-function outputLength(data: unknown): number {
-  return (typeof data === "string" ? data : JSON.stringify(data, null, 2)).length;
+type ResultMeasurement<T> = {
+  output: (result: T) => unknown;
+  baseline?: (result: T) => { bytes: number; kind: BaselineKind };
+};
+
+function serializeOutput(data: unknown): string {
+  return typeof data === "string" ? `${data}\n` : `${JSON.stringify(data, null, 2)}\n`;
 }
 
-async function measured<T>(repoRoot: string, operation: string, input: unknown, fn: () => Promise<T> | T, logOutput?: (result: T) => unknown): Promise<T> {
+async function measured<T>(
+  repoRoot: string,
+  operation: string,
+  input: unknown,
+  fn: () => Promise<T> | T,
+  measurement: ResultMeasurement<T> = { output: (result) => result }
+): Promise<{ result: T; output: unknown }> {
   const start = Date.now();
   let success = false;
+  let output: unknown = "";
   let outputChars = 0;
+  let outputBytes = 0;
+  let baseline: { bytes: number; kind: BaselineKind } | undefined;
   try {
     const result = await fn();
+    output = measurement.output(result);
+    const serializedOutput = serializeOutput(output);
+    const size = outputSize(serializedOutput);
     success = true;
-    outputChars = outputLength(logOutput ? logOutput(result) : result);
-    return result;
+    outputChars = size.chars;
+    outputBytes = size.bytes;
+    baseline = measurement.baseline?.(result);
+    return { result, output };
   } finally {
-    appendEvent(repoRoot, { source: "cli", operation, inputChars: JSON.stringify(input).length, outputChars, durationMs: Date.now() - start, success });
+    appendEvent(repoRoot, {
+      source: "cli",
+      operation,
+      inputChars: JSON.stringify(input).length,
+      outputChars,
+      outputBytes,
+      ...(baseline ? { baselineBytes: baseline.bytes, baselineKind: baseline.kind } : {}),
+      durationMs: Date.now() - start,
+      success
+    });
   }
 }
 
 function print(data: unknown): void {
-  process.stdout.write(typeof data === "string" ? `${data}\n` : `${JSON.stringify(data, null, 2)}\n`);
+  process.stdout.write(serializeOutput(data));
 }
 
 const program = new Command();
@@ -153,25 +182,43 @@ program.command("doctor").option("--repo <repo>", "repository root", ".").action
 
 program.command("index").option("--repo <repo>", "repository root", ".").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  const result = await measured(
+  const measuredResult = await measured(
     repoRoot,
     "index",
     opts,
     () => buildIndex(repoRoot),
-    (indexed) => ({ summary: `Indexed ${indexed.stats.fileCount} files.`, indexPath: path.join(stateDir(repoRoot), "index.json"), stats: indexed.stats })
+    {
+      output: (indexed) => ({ summary: `Indexed ${indexed.stats.fileCount} files.`, indexPath: path.join(stateDir(repoRoot), "index.json"), stats: indexed.stats })
+    }
   );
-  print({ summary: `Indexed ${result.stats.fileCount} files.`, indexPath: path.join(stateDir(repoRoot), "index.json"), stats: result.stats });
+  print(measuredResult.output);
 });
 
 program.command("dossier").argument("<task>").option("--repo <repo>", "repository root", ".").option("--format <format>", "markdown").option("--budget <chars>", "12000").action(async (task, opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  const result = await measured(repoRoot, "dossier", { task, opts }, () => generateDossier(repoRoot, task, Number(opts.budget)));
-  print(result.markdown);
+  const measuredResult = await measured(
+    repoRoot,
+    "dossier",
+    { task, opts },
+    () => generateDossier(repoRoot, task, Number(opts.budget)),
+    { output: (result) => result.markdown }
+  );
+  print(measuredResult.output);
 });
 
 program.command("search").argument("<query>").option("--repo <repo>", "repository root", ".").option("--limit <n>", "10").action(async (query, opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  print(await measured(repoRoot, "search", { query, opts }, () => searchIndex(repoRoot, query, Number(opts.limit))));
+  const measuredResult = await measured(
+    repoRoot,
+    "search",
+    { query, opts },
+    () => searchIndexMeasured(repoRoot, query, Number(opts.limit)),
+    {
+      output: (result) => result.results,
+      baseline: (result) => ({ bytes: outputSize(serializeOutput(result.unboundedResults)).bytes, kind: "unbounded-search-results" })
+    }
+  );
+  print(measuredResult.output);
 });
 
 program.command("read")
@@ -189,23 +236,54 @@ program.command("read")
       startLine: opts.startLine as number | undefined,
       lineCount: opts.lineCount as number | undefined
     };
-    print(await measured(repoRoot, "read", { file, opts: readOptions }, () => readBudgeted(repoRoot, file, readOptions)));
+    const measuredResult = await measured(
+      repoRoot,
+      "read",
+      { file, opts: readOptions },
+      () => readBudgeted(repoRoot, file, readOptions),
+      {
+        output: (result) => result,
+        baseline: (result) => ({ bytes: result.fileSize, kind: "full-file" })
+      }
+    );
+    print(measuredResult.output);
   });
 
 program.command("run").option("--repo <repo>", "repository root", ".").option("--kind <kind>", "generic").option("--allow-unconfigured").argument("[cmd...]", "command after --").allowUnknownOption(true).allowExcessArguments(true).action(async (cmdParts: string[], opts) => {
   const repoRoot = resolveRepo(opts.repo);
   const parts = cmdParts.includes("--") ? cmdParts.slice(cmdParts.indexOf("--") + 1) : cmdParts;
-  print(await measured(repoRoot, "run", { opts, parts }, () => runSummary(repoRoot, opts.kind, parts, !!opts.allowUnconfigured)));
+  const measuredResult = await measured(
+    repoRoot,
+    "run",
+    { opts, parts },
+    () => runSummary(repoRoot, opts.kind, parts, !!opts.allowUnconfigured),
+    {
+      output: (result) => result,
+      baseline: (result) => ({ bytes: result.rawOutputBytes, kind: "raw-command-output" })
+    }
+  );
+  print(measuredResult.output);
 });
 
 program.command("diff").option("--repo <repo>", "repository root", ".").option("--staged").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  print(await measured(repoRoot, "diff", opts, () => gitDiffSummary(repoRoot, !!opts.staged)));
+  const measuredResult = await measured(
+    repoRoot,
+    "diff",
+    opts,
+    () => gitDiffSummary(repoRoot, !!opts.staged),
+    {
+      output: (result) => result,
+      baseline: (result) => ({ bytes: result.rawDiffBytes, kind: "raw-diff" })
+    }
+  );
+  print(measuredResult.output);
 });
 
 program.command("compare-cost").option("--repo <repo>", "repository root", ".").option("--base <ref>", "HEAD~1").option("--head <ref>", "HEAD").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  print(await measured(repoRoot, "compare-cost", opts, () => compareCost(repoRoot, opts.base, opts.head)));
+  const measuredResult = await measured(repoRoot, "compare-cost", opts, () => compareCost(repoRoot, opts.base, opts.head));
+  print(measuredResult.output);
 });
 
 program.command("budget").option("--repo <repo>", "repository root", ".").action((opts) => print(budgetReport(resolveRepo(opts.repo))));

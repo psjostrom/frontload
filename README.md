@@ -179,6 +179,21 @@ frontload compare-cost --repo . --base HEAD~1 --head HEAD
 
 This is the command to use when you want to prove whether the workflow actually reduced context burden.
 
+`frontload budget` also reports per-operation savings when Frontload observed an
+exact before/after pair:
+
+- command summaries versus captured raw command output
+- budgeted reads versus full-file bytes
+- diff summaries versus raw patch bytes
+- bounded search versus the same unbounded Frontload search result set
+- local-scout output versus uncapped local command output
+- PostToolUse hook replacements versus observed native tool output
+
+Indexing, dossiers, policy output, and compare-cost remain explicitly
+unmeasured because they do not have an honest native-output equivalent.
+Negative savings mean the measured Frontload response used more bytes than its
+baseline; the report keeps that overhead instead of hiding it.
+
 ## CLI Reference
 
 ### `init`
@@ -282,7 +297,10 @@ Compares logged `frontload` context against raw changed-file and patch baselines
 frontload budget --repo .
 ```
 
-Reports logged operations, estimated token output, largest operations, and the last 20 events.
+Reports logged operations, exact measured baseline/output bytes, signed net
+savings, unmeasured operation counts, largest operations, and the last 20
+events. Search savings compare bounded versus unbounded Frontload results; they
+are not presented as native grep savings.
 
 Token estimates use `chars / 4`. Treat them as directional, not billing-grade.
 
@@ -490,6 +508,8 @@ You are still responsible for command allowlists. Do not configure destructive c
 - Ranking is lexical and heuristic.
 - Kotlin and Markdown symbol extraction is simpler than TypeScript/JavaScript extraction.
 - `compare-cost` relies on git history and current `.frontload/events.jsonl`.
+- Savings are reported only when Frontload observes an exact baseline; other
+  operations are labeled unmeasured.
 - Command summaries preserve common TypeScript and test failures, but parsers are intentionally conservative.
 - Local scout is an extension point and is disabled by default.
 

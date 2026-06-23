@@ -187,7 +187,13 @@ export async function runSummary(repoRoot: string, kind: CommandSummary["kind"],
   let signal: string | null = null;
   let raw = "";
   try {
-    const result = await execa(commandParts[0], commandParts.slice(1), { cwd: repoRoot, all: true, reject: false, timeout: config.commands.timeoutMs });
+    const result = await execa(commandParts[0], commandParts.slice(1), {
+      cwd: repoRoot,
+      all: true,
+      reject: false,
+      stripFinalNewline: false,
+      timeout: config.commands.timeoutMs
+    });
     raw = result.all ?? "";
     exitCode = result.exitCode ?? null;
     signal = result.signal ?? null;

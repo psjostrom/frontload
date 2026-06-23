@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildIndex } from "../../src/indexer/indexer.js";
-import { generateDossier, searchIndex } from "../../src/dossier/dossier.js";
+import { generateDossier, searchIndex, searchIndexMeasured } from "../../src/dossier/dossier.js";
 
 const fixture = path.resolve("fixtures/react-ts-app");
 
@@ -31,6 +31,15 @@ describe("dossier", () => {
     const match = results.find((result) => result.matches?.some((line) => line.text.includes("92 mg/dL")));
     expect(match?.file.path).toBe("src/chart/ChartTooltip.test.tsx");
     expect(match?.why).toContain("content match");
+  });
+
+  it("returns exact unbounded search results alongside the bounded response", async () => {
+    await buildIndex(fixture);
+    const measured = await searchIndexMeasured(fixture, ".", 2);
+
+    expect(measured.results).toHaveLength(2);
+    expect(measured.unboundedResults.length).toBeGreaterThan(2);
+    expect(measured.results).toEqual(measured.unboundedResults.slice(0, 2));
   });
 
   it("redacts secrets from literal content matches", async () => {

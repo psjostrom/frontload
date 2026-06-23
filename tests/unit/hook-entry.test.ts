@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { readEvents } from "../../src/budget/events.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../../src/gate/entry.js";
 
 function initializedRepo(): string {
@@ -41,15 +42,16 @@ describe("hook entry adapters", () => {
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
       budgets: { maxToolOutputChars: 500 }
     }));
+    const toolResponse = {
+      filenames: Array.from({ length: 100 }, (_, i) => `src/very/long/path/file-${i}.ts`),
+      durationMs: 12,
+      numFiles: 100,
+      truncated: false
+    };
     const payload = JSON.stringify({
       cwd: repo,
       tool_name: "Glob",
-      tool_response: {
-        filenames: Array.from({ length: 100 }, (_, i) => `src/very/long/path/file-${i}.ts`),
-        durationMs: 12,
-        numFiles: 100,
-        truncated: false
-      }
+      tool_response: toolResponse
     });
 
     const result = JSON.parse((await runPostToolUseHook("claude", payload))!);
@@ -60,6 +62,15 @@ describe("hook entry adapters", () => {
       truncated: true
     });
     expect(JSON.stringify(result.hookSpecificOutput.updatedToolOutput).length).toBeLessThanOrEqual(500);
+    const event = readEvents(repo).at(-1);
+    expect(event).toMatchObject({
+      source: "hook",
+      operation: "post-tool-use:Glob",
+      baselineBytes: Buffer.byteLength(JSON.stringify(toolResponse)),
+      baselineKind: "observed-tool-output",
+      outputBytes: Buffer.byteLength(JSON.stringify(result.hookSpecificOutput.updatedToolOutput))
+    });
+    expect(event!.netSavedBytes).toBeGreaterThan(0);
   });
 
   it("compacts Claude Grep content without changing scalar metadata", async () => {
@@ -104,6 +115,11 @@ describe("hook entry adapters", () => {
     expect(result.decision).toBe("block");
     expect(result.reason).toContain("[Frontload truncated ");
     expect(result.reason.length).toBeLessThanOrEqual(500);
+    expect(readEvents(repo).at(-1)).toMatchObject({
+      source: "hook",
+      operation: "post-tool-use:Bash",
+      baselineKind: "observed-tool-output"
+    });
   });
 
   it("does not emit post-hook output when no compaction is needed", async () => {
@@ -115,6 +131,10 @@ describe("hook entry adapters", () => {
     });
 
     expect(await runPostToolUseHook("codex", payload)).toBeNull();
+    expect(readEvents(repo).at(-1)).toMatchObject({
+      baselineKind: "observed-tool-output",
+      netSavedBytes: 0
+    });
   });
 
   it("stays inert outside initialized repositories and fails open", async () => {
@@ -186,5 +206,10 @@ describe("hook entry adapters", () => {
     });
 
     expect(await runPostToolUseHook("claude", payload)).toBeNull();
+    expect(readEvents(repo).at(-1)).toMatchObject({
+      operation: "post-tool-use:Glob",
+      baselineKind: "observed-tool-output",
+      netSavedBytes: 0
+    });
   });
 });
