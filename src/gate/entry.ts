@@ -16,6 +16,10 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function hookOutputSize(value: unknown): { chars: number; bytes: number } {
+  return outputSize(typeof value === "string" ? value : JSON.stringify(value) ?? String(value));
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -103,7 +107,7 @@ export async function runPostToolUseHook(host: HookHost, rawInput?: string): Pro
 
     const compacted = compactToolOutput(payload.tool_response, initialized.config.budgets.maxToolOutputChars);
     const replacement = compacted.fitsBudget && compacted.truncated ? compacted.output : payload.tool_response;
-    const replacementSize = outputSize(replacement);
+    const replacementSize = hookOutputSize(replacement);
     try {
       appendEvent(initialized.root, {
         source: "hook",
@@ -111,7 +115,7 @@ export async function runPostToolUseHook(host: HookHost, rawInput?: string): Pro
         inputChars: JSON.stringify(payload.tool_input ?? {}).length,
         outputChars: replacementSize.chars,
         outputBytes: replacementSize.bytes,
-        baselineBytes: outputSize(payload.tool_response).bytes,
+        baselineBytes: hookOutputSize(payload.tool_response).bytes,
         baselineKind: "observed-tool-output",
         durationMs: Date.now() - start,
         success: true

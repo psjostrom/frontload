@@ -89,6 +89,9 @@ PostToolUse records one event whenever Frontload observes an eligible response:
 - schema-preserving compaction impossible: baseline and output are equal because
   the hook fails open.
 
+String hook values are measured directly. Structured hook values use the compact
+JSON serialization used by the hook compaction boundary.
+
 PreToolUse rewrites are not assigned a savings number because command output is
 not yet known.
 

@@ -42,15 +42,16 @@ describe("hook entry adapters", () => {
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
       budgets: { maxToolOutputChars: 500 }
     }));
+    const toolResponse = {
+      filenames: Array.from({ length: 100 }, (_, i) => `src/very/long/path/file-${i}.ts`),
+      durationMs: 12,
+      numFiles: 100,
+      truncated: false
+    };
     const payload = JSON.stringify({
       cwd: repo,
       tool_name: "Glob",
-      tool_response: {
-        filenames: Array.from({ length: 100 }, (_, i) => `src/very/long/path/file-${i}.ts`),
-        durationMs: 12,
-        numFiles: 100,
-        truncated: false
-      }
+      tool_response: toolResponse
     });
 
     const result = JSON.parse((await runPostToolUseHook("claude", payload))!);
@@ -61,12 +62,15 @@ describe("hook entry adapters", () => {
       truncated: true
     });
     expect(JSON.stringify(result.hookSpecificOutput.updatedToolOutput).length).toBeLessThanOrEqual(500);
-    expect(readEvents(repo).at(-1)).toMatchObject({
+    const event = readEvents(repo).at(-1);
+    expect(event).toMatchObject({
       source: "hook",
       operation: "post-tool-use:Glob",
-      baselineKind: "observed-tool-output"
+      baselineBytes: Buffer.byteLength(JSON.stringify(toolResponse)),
+      baselineKind: "observed-tool-output",
+      outputBytes: Buffer.byteLength(JSON.stringify(result.hookSpecificOutput.updatedToolOutput))
     });
-    expect(readEvents(repo).at(-1)!.netSavedBytes).toBeGreaterThan(0);
+    expect(event!.netSavedBytes).toBeGreaterThan(0);
   });
 
   it("compacts Claude Grep content without changing scalar metadata", async () => {

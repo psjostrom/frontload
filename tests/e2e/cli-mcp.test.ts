@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { describe, expect, it } from "vitest";
 import { execa } from "execa";
 import { budgetReport, readEvents } from "../../src/budget/events.js";
 import { searchIndexMeasured } from "../../src/dossier/dossier.js";
@@ -9,39 +11,9 @@ import { createMcpHandlers } from "../../src/mcp/server.js";
 
 const fixture = path.resolve("fixtures/react-ts-app");
 
-async function createMockedMcpHandlers(
-  repoRoot: string,
-  options: {
-    appendEvent?: typeof import("../../src/budget/events.js").appendEvent;
-    runSummary?: typeof import("../../src/commands/run.js").runSummary;
-  } = {}
-): Promise<ReturnType<typeof createMcpHandlers>> {
-  vi.resetModules();
-  vi.doMock("../../src/budget/events.js", async () => {
-    const actual = await vi.importActual<typeof import("../../src/budget/events.js")>("../../src/budget/events.js");
-    return {
-      ...actual,
-      appendEvent: options.appendEvent ?? actual.appendEvent
-    };
-  });
-  if (options.runSummary) {
-    vi.doMock("../../src/commands/run.js", async () => {
-      const actual = await vi.importActual<typeof import("../../src/commands/run.js")>("../../src/commands/run.js");
-      return {
-        ...actual,
-        runSummary: options.runSummary
-      };
-    });
-  }
-  try {
-    const mod = await import("../../src/mcp/server.js");
-    return mod.createMcpHandlers(repoRoot);
-  } finally {
-    vi.doUnmock("../../src/budget/events.js");
-    if (options.runSummary) {
-      vi.doUnmock("../../src/commands/run.js");
-    }
-  }
+function makeEventPersistenceFail(repo: string): void {
+  fs.mkdirSync(path.join(repo, ".frontload"), { recursive: true });
+  fs.mkdirSync(path.join(repo, ".frontload/events.jsonl"));
 }
 
 describe("e2e proof workflow", () => {
@@ -92,13 +64,9 @@ describe("e2e proof workflow", () => {
 
   it("still returns a successful MCP response when event persistence fails", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-fail-open-"));
-    const handlers = await createMockedMcpHandlers(repo, {
-      appendEvent: () => {
-        throw new Error("persist failed");
-      }
-    });
+    makeEventPersistenceFail(repo);
 
-    const response = await handlers.policy({});
+    const response = await createMcpHandlers(repo).policy({});
     expect(JSON.parse(response.content[0].text)).toMatchObject({
       summary: "Current Frontload policy."
     });
@@ -106,16 +74,12 @@ describe("e2e proof workflow", () => {
 
   it("keeps the original MCP error when event persistence also fails", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-error-mask-"));
-    const handlers = await createMockedMcpHandlers(repo, {
-      appendEvent: () => {
-        throw new Error("persist failed");
-      },
-      runSummary: () => {
-        throw new Error("tool failed");
-      }
-    });
+    makeEventPersistenceFail(repo);
 
-    await expect(handlers.run({ kind: "generic", command: "node -e \"console.log('ok')\"" })).rejects.toThrow("tool failed");
+    await expect(createMcpHandlers(repo).read({
+      path: "missing.ts",
+      budgetChars: 100
+    })).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("records the exact run baseline bytes from combined stdout and stderr", async () => {
@@ -203,6 +167,34 @@ describe("e2e proof workflow", () => {
       expect(event?.outputBytes).toBe(Buffer.byteLength(response.content[0].text));
     }
     expect(fs.existsSync("proof/mcp-transcript.jsonl")).toBe(true);
+  });
+
+  it("serves registered MCP tools over stdio", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-stdio-"));
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [path.resolve("dist/src/cli/index.js"), "mcp", "--repo", repo],
+      cwd: path.resolve("."),
+      stderr: "pipe"
+    });
+    const client = new Client({ name: "frontload-e2e", version: "1.0.0" });
+
+    try {
+      await client.connect(transport);
+      const response = await client.callTool({ name: "fl_policy", arguments: {} });
+      const content = response.content as Array<{ type: string; text?: string }>;
+      const text = content.find((item) => item.type === "text")?.text;
+
+      expect(JSON.parse(text ?? "{}")).toMatchObject({
+        summary: "Current Frontload policy."
+      });
+      expect(readEvents(repo).at(-1)).toMatchObject({
+        source: "mcp",
+        operation: "policy"
+      });
+    } finally {
+      await client.close();
+    }
   });
 
   it("records exact CLI baselines for measured operations", async () => {

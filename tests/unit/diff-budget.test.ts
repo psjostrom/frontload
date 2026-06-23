@@ -19,6 +19,16 @@ describe("diff and budget", () => {
     expect(report.summary).toContain("1 unmeasured operation");
   });
 
+  it("orders largest operations by UTF-8 bytes instead of characters", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-budget-largest-bytes-"));
+    appendEvent(dir, { source: "cli", operation: "ascii", inputChars: 1, outputChars: 4, outputBytes: 4, durationMs: 1, success: true });
+    appendEvent(dir, { source: "cli", operation: "unicode", inputChars: 1, outputChars: 3, outputBytes: 6, durationMs: 1, success: true });
+
+    const report = budgetReport(dir);
+
+    expect(report.largest.map((event) => event.operation)).toEqual(["unicode", "ascii"]);
+  });
+
   it("exports output helpers", () => {
     expect(outputText("hello")).toBe("hello");
     expect(outputText({ a: 1 })).toBe(JSON.stringify({ a: 1 }, null, 2));
