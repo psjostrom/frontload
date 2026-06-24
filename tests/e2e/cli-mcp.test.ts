@@ -72,6 +72,90 @@ describe("e2e proof workflow", () => {
     });
   });
 
+  it("withholds oversized MCP responses before returning them", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-output-cap-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 64
+      }
+    }));
+
+    const response = await createMcpHandlers(repo).policy({});
+    const text = response.content[0].text;
+    const data = JSON.parse(text);
+    const event = readEvents(repo).at(-1);
+
+    expect(text.length).toBeLessThanOrEqual(64);
+    expect(data).toMatchObject({
+      truncated: true,
+      summary: expect.any(String)
+    });
+    expect(event).toMatchObject({
+      source: "mcp",
+      operation: "policy",
+      success: true,
+      outputBytes: Buffer.byteLength(text)
+    });
+  });
+
+  it("withholds oversized MCP budget reports without logging the report itself", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-budget-cap-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 120
+      }
+    }));
+    await createMcpHandlers(repo).policy({});
+
+    const response = await createMcpHandlers(repo).budget({});
+    const text = response.content[0].text;
+    const data = JSON.parse(text);
+    const events = readEvents(repo);
+
+    expect(text.length).toBeLessThanOrEqual(120);
+    expect(data).toMatchObject({
+      summary: expect.any(String),
+      truncated: true
+    });
+    expect(events.map((event) => event.operation)).toEqual(["policy"]);
+  });
+
+  it("preserves failing run state and baseline accounting when withholding oversized MCP responses", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-run-cap-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 600
+      },
+      commands: {
+        allowed: ["./fail-loudly.sh"]
+      }
+    }));
+    const scriptPath = path.join(repo, "fail-loudly.sh");
+    fs.writeFileSync(scriptPath, "#!/bin/sh\nprintf 'FAIL src/sample.test.ts\\n'; printf 'x%.0s' $(seq 1 5000); exit 1\n");
+    fs.chmodSync(scriptPath, 0o755);
+
+    const response = await createMcpHandlers(repo).run({ kind: "test", command: "./fail-loudly.sh" });
+    const text = response.content[0].text;
+    const data = JSON.parse(text);
+    const event = readEvents(repo).at(-1);
+
+    expect(text.length).toBeLessThanOrEqual(600);
+    expect(data).toMatchObject({
+      summary: expect.any(String),
+      truncated: true,
+      operation: "run",
+      exitCode: 1,
+      fullLogPath: expect.stringContaining(".frontload/logs/")
+    });
+    expect(data.findings.length).toBeGreaterThan(0);
+    expect(event).toMatchObject({
+      operation: "run",
+      baselineKind: "raw-command-output",
+      outputBytes: Buffer.byteLength(text)
+    });
+    expect(event?.baselineBytes).toBeGreaterThan(5000);
+  });
+
   it("keeps the original MCP error when event persistence also fails", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-error-mask-"));
     makeEventPersistenceFail(repo);
@@ -140,7 +224,9 @@ describe("e2e proof workflow", () => {
     const index = JSON.parse(calls.find(([tool]) => tool === "fl_repo_index")![1].content[0].text);
     const dossier = JSON.parse(calls.find(([tool]) => tool === "fl_repo_dossier")![1].content[0].text);
     const read = JSON.parse(calls.find(([tool]) => tool === "fl_read_budgeted")![1].content[0].text);
-    expect(index.index.stats.fileCount).toBeGreaterThan(4);
+    expect(index.index).toBeUndefined();
+    expect(index.indexPath).toBe(path.join(fixture, ".frontload/index.json"));
+    expect(index.stats.fileCount).toBeGreaterThan(4);
     expect(dossier.markdown).toContain("ChartTooltip.tsx");
     expect(read.excerpt).not.toContain("1 |");
     expect(read.numberedExcerpt).toContain("|");

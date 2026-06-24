@@ -1,3 +1,4 @@
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { execa } from "execa";
@@ -10,6 +11,7 @@ import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { BaselineKind, CommandSummary } from "../types.js";
+import { stateDir } from "../utils/path.js";
 
 export type McpTextResponse = {
   content: Array<{ type: "text"; text: string }>;
@@ -32,6 +34,68 @@ function json(data: unknown): McpTextResponse {
   return { content: [{ type: "text", text: outputText(data) }] };
 }
 
+function compactRunOutput(data: unknown, maxToolOutputChars: number): unknown | undefined {
+  const run = data as Partial<CommandSummary>;
+  if (typeof run !== "object" || run === null || typeof run.exitCode === "undefined" || !Array.isArray(run.findings)) return undefined;
+  const findings = run.findings.slice(0, 3).map((finding) => ({
+    severity: finding.severity,
+    file: finding.file,
+    line: finding.line,
+    title: finding.title
+  }));
+  const compact = {
+    summary: "Run output exceeded maxToolOutputChars and was compacted.",
+    truncated: true,
+    operation: "run",
+    exitCode: run.exitCode,
+    signal: run.signal,
+    fullLogPath: run.fullLogPath,
+    findings
+  };
+  if (outputSize(compact).chars <= maxToolOutputChars) return compact;
+
+  const singleFinding = { ...compact, findings: findings.slice(0, 1) };
+  if (outputSize(singleFinding).chars <= maxToolOutputChars) return singleFinding;
+
+  const noFindings = { ...compact, findings: [] };
+  if (outputSize(noFindings).chars <= maxToolOutputChars) return noFindings;
+
+  return undefined;
+}
+
+function withheldOutput(operation: string, maxToolOutputChars: number, original: { chars: number; bytes: number }, data?: unknown): unknown {
+  if (operation === "run") {
+    const compact = compactRunOutput(data, maxToolOutputChars);
+    if (compact) return compact;
+  }
+
+  const detailed = {
+    summary: "Tool output exceeded maxToolOutputChars and was withheld.",
+    truncated: true,
+    operation,
+    maxToolOutputChars,
+    originalOutputChars: original.chars,
+    originalOutputBytes: original.bytes,
+    hint: "Narrow the request or use a budgeted tool for a smaller excerpt."
+  };
+  if (outputSize(detailed).chars <= maxToolOutputChars) return detailed;
+
+  const compact = { summary: "Tool output withheld.", truncated: true, operation };
+  if (outputSize(compact).chars <= maxToolOutputChars) return compact;
+
+  return { summary: "Tool output withheld.", truncated: true };
+}
+
+function boundedJson(repoRoot: string, operation: string, data: unknown): { response: McpTextResponse; size: { chars: number; bytes: number } } {
+  const originalSize = outputSize(data);
+  const config = loadConfig(repoRoot);
+  const bounded = originalSize.chars > config.budgets.maxToolOutputChars
+    ? withheldOutput(operation, config.budgets.maxToolOutputChars, originalSize, data)
+    : data;
+  const size = outputSize(bounded);
+  return { response: json(bounded), size };
+}
+
 async function measuredMcp<TInput>(
   repoRoot: string,
   operation: string,
@@ -45,12 +109,12 @@ async function measuredMcp<TInput>(
   let baseline: MeasuredMcpResult["baseline"];
   try {
     const result = await fn();
-    const size = outputSize(result.data);
+    const { response, size } = boundedJson(repoRoot, operation, result.data);
     success = true;
     outputChars = size.chars;
     outputBytes = size.bytes;
     baseline = result.baseline;
-    return json(result.data);
+    return response;
   } finally {
     try {
       appendEvent(repoRoot, {
@@ -85,9 +149,17 @@ export function createMcpHandlers(repoRoot: string) {
       }),
 
     index: async (input: { force?: boolean }): Promise<McpTextResponse> =>
-      measuredMcp(repoRoot, "index", input, async () => ({
-        data: { summary: "Repository index refreshed.", index: await buildIndex(repoRoot) }
-      })),
+      measuredMcp(repoRoot, "index", input, async () => {
+        const index = await buildIndex(repoRoot);
+        return {
+          data: {
+            summary: "Repository index refreshed.",
+            indexPath: path.join(stateDir(repoRoot), "index.json"),
+            stats: index.stats,
+            edgeCount: index.edges.length
+          }
+        };
+      }),
 
     dossier: async (input: { task: string; budgetChars: number; maxFiles: number }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "dossier", input, async () => ({
@@ -133,7 +205,7 @@ export function createMcpHandlers(repoRoot: string) {
         return { data, baseline: { bytes: data.rawDiffBytes, kind: "raw-diff" } };
       }),
 
-    budget: async (_input: Record<string, never>): Promise<McpTextResponse> => json(budgetReport(repoRoot)),
+    budget: async (_input: Record<string, never>): Promise<McpTextResponse> => boundedJson(repoRoot, "budget", budgetReport(repoRoot)).response,
 
     localScout: async (input: { prompt: string }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "local-scout", input, async () => {
