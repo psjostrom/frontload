@@ -236,7 +236,7 @@ export function createMcpHandlers(repoRoot: string) {
 }
 
 export async function startMcp(repoRoot: string): Promise<void> {
-  const server = new McpServer({ name: "frontload", version: "0.1.5" });
+  const server = new McpServer({ name: "frontload", version: "0.1.6" });
   const handlers = createMcpHandlers(repoRoot);
   server.tool("fl_policy", "Return current budget and command policy. Use before running costly commands; do not use for source exploration.", {}, handlers.policy);
   server.tool("fl_repo_index", "Build or refresh the repo index. Use before dossiers/search; not needed before every read.", { force: z.boolean().optional() }, handlers.index);
