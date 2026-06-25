@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import readline from "node:readline/promises";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { appendEvent, budgetReport, outputSize } from "../budget/events.js";
 import { loadConfig } from "../config/config.js";
 import { readBudgeted } from "../commands/read.js";
@@ -13,7 +13,7 @@ import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
-import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
@@ -112,6 +112,17 @@ async function promptApproveGlobalInstall(commandText: string): Promise<boolean>
   }
 }
 
+async function promptApproveGlobalUpgrade(commandText: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`Upgrade frontload globally with "${commandText}"? [Y/n]: `);
+    return !["n", "no"].includes(answer.trim().toLowerCase());
+  } finally {
+    rl.close();
+  }
+}
+
 function configuresAgent(agents: Array<"codex" | "claude" | "all">, agent: "codex" | "claude"): boolean {
   return agents.includes("all") || agents.includes(agent);
 }
@@ -139,6 +150,25 @@ async function ensureGlobalFrontload(approved: boolean): Promise<GlobalInstallRe
   return installGlobalFrontload(packageManager);
 }
 
+async function ensureGlobalFrontloadUpgrade(approved: boolean): Promise<GlobalInstallResult> {
+  const packageManager = detectPackageManager();
+  const install = globalInstallCommand(packageManager, "frontload@latest");
+  const canUpgrade = approved || await promptApproveGlobalUpgrade(formatCommand(install));
+  if (!canUpgrade) {
+    return {
+      action: "manual",
+      command: install.command,
+      args: install.args,
+      notes: [`Upgrade frontload manually before restarting your editor: ${formatCommand(install)}`]
+    };
+  }
+  return upgradeGlobalFrontload(packageManager);
+}
+
+function refreshArgs(repo: string, homeDir: string): string[] {
+  return ["upgrade", "--refresh-only", "--repo", repo, "--home", homeDir];
+}
+
 program
   .command("init")
   .option("--repo <repo>", "repository root", ".")
@@ -161,6 +191,35 @@ program
       globalInstall,
       ...initAll(resolveRepo(opts.repo), agents, homeDir, !!opts.force, scope)
     });
+  });
+
+program
+  .command("upgrade")
+  .option("--repo <repo>", "repository root", ".")
+  .option("--home <dir>", "home directory for agent plugin installation")
+  .option("--yes", "approve upgrading frontload globally")
+  .addOption(new Option("--refresh-only").hideHelp())
+  .action(async (opts) => {
+    const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
+    const repoRoot = resolveRepo(opts.repo);
+    if (opts.refreshOnly) {
+      const upgrade = upgradeAll(repoRoot, homeDir);
+      print({
+        summary: upgrade.agents.length > 0
+          ? "Frontload upgrade refreshed existing agent configuration."
+          : "Frontload upgrade found no existing agent configuration to refresh.",
+        ...upgrade
+      });
+      return;
+    }
+
+    const globalInstall = await ensureGlobalFrontloadUpgrade(!!opts.yes);
+    if (globalInstall.action === "manual") {
+      print({ summary: "Frontload was not upgraded globally; agent configuration was not refreshed.", globalInstall });
+      process.exitCode = 1;
+      return;
+    }
+    execFileSync("frontload", refreshArgs(repoRoot, homeDir), { stdio: "inherit" });
   });
 
 program.command("doctor").option("--repo <repo>", "repository root", ".").action(async (opts) => {

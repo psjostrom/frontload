@@ -16,6 +16,12 @@ function makeEventPersistenceFail(repo: string): void {
   fs.mkdirSync(path.join(repo, ".frontload/events.jsonl"));
 }
 
+function writeShellScript(file: string, content: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+  fs.chmodSync(file, 0o755);
+}
+
 describe("e2e proof workflow", () => {
   it("runs host-aware hook subcommands through the built CLI", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-cli-"));
@@ -199,6 +205,91 @@ describe("e2e proof workflow", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Expected a positive integer");
     expect(result.stderr).not.toContain("TypeError");
+  });
+
+  it("does not refresh agent config when non-interactive upgrade lacks approval", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-manual-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-home-manual-"));
+    const codexConfig = path.join(home, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, [
+      "[mcp_servers.frontload]",
+      "command = \"old-frontload\"",
+      "args = [\"mcp\"]",
+      ""
+    ].join("\n"));
+
+    const result = await execa(
+      process.execPath,
+      [path.resolve("dist/src/cli/index.js"), "upgrade", "--repo", repo, "--home", home],
+      { reject: false }
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).summary).toContain("not upgraded globally");
+    expect(fs.readFileSync(codexConfig, "utf8")).toContain("old-frontload");
+    expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
+  });
+
+  it("delegates upgrade refresh to the installed frontload binary", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-reexec-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-home-reexec-"));
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-bin-"));
+    const marker = path.join(repo, "refresh-args.txt");
+    writeShellScript(path.join(bin, "npm"), "#!/bin/sh\nexit 0\n");
+    writeShellScript(path.join(bin, "frontload"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${marker}"\n`);
+    fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".codex/config.toml"), [
+      "[mcp_servers.frontload]",
+      "command = \"frontload\"",
+      "args = [\"mcp\"]",
+      ""
+    ].join("\n"));
+
+    const result = await execa(
+      process.execPath,
+      [path.resolve("dist/src/cli/index.js"), "upgrade", "--yes", "--repo", repo, "--home", home],
+      {
+        env: {
+          ...process.env,
+          npm_config_user_agent: "npm/10.0.0 node/v26.0.0",
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`
+        }
+      }
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.readFileSync(marker, "utf8").split(/\r?\n/).filter(Boolean)).toEqual([
+      "upgrade",
+      "--refresh-only",
+      "--repo",
+      repo,
+      "--home",
+      home
+    ]);
+  });
+
+  it("refreshes existing agent config through the CLI refresh-only path", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-refresh-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-home-refresh-"));
+    const codexConfig = path.join(home, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, [
+      "[mcp_servers.frontload]",
+      "command = \"old-frontload\"",
+      "args = [\"mcp\"]",
+      ""
+    ].join("\n"));
+
+    const result = await execa(
+      process.execPath,
+      [path.resolve("dist/src/cli/index.js"), "upgrade", "--refresh-only", "--repo", repo, "--home", home]
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).summary).toContain("refreshed existing agent configuration");
+    expect(fs.readFileSync(codexConfig, "utf8")).toContain('command = "frontload"');
+    expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
   });
 
   it("calls required tool handlers and stores transcript", async () => {

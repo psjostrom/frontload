@@ -84,6 +84,7 @@ frontload budget --repo .
 
 If you already installed the package globally, use `frontload init`.
 The init command asks which agents to configure. For automation, pass `--agents codex`, `--agents claude`, `--agents all`, or `--agents none`.
+After a Frontload release, use `npx frontload@latest upgrade` to update the global package and refresh existing agent integrations.
 
 Local state is written to `.frontload/` in the target repo:
 
@@ -222,6 +223,22 @@ Without `--force`, existing files are left untouched.
 If `frontload` is not already installed globally, `init` prompts before running
 the package-manager-specific global install command. Restart the editor after
 init completes; MCP clients load server config at startup.
+
+### `upgrade`
+
+```bash
+frontload upgrade
+frontload upgrade --yes
+frontload upgrade --repo .
+```
+
+Updates the global `frontload` package with the current package manager's
+global install command, then refreshes only agent integrations that already
+contain a Frontload MCP entry.
+
+Upgrade refreshes MCP config, hooks, and copied Frontload skills for existing
+Codex and Claude Code integrations. It does not create starter project files
+and does not configure new agents just because their config directories exist.
 
 ### `doctor`
 

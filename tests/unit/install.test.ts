@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope } from "../../src/install/install.js";
+import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
 
 function writeExecutable(dir: string, name = "frontload"): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -325,5 +325,152 @@ describe("installer", () => {
     } finally {
       process.env.PATH = oldPath;
     }
+  });
+
+  it("upgrades the global package to the latest tag", () => {
+    const oldPath = process.env.PATH;
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-global-upgrade-bin-"));
+    process.env.PATH = bin;
+    writeExecutable(bin);
+    try {
+      const calls: Array<{ command: string; args: string[] }> = [];
+      const upgraded = upgradeGlobalFrontload("npm", (command, args) => {
+        calls.push({ command, args });
+      });
+
+      expect(upgraded.action).toBe("updated");
+      expect(calls).toEqual([{ command: "npm", args: ["install", "-g", "frontload@latest"] }]);
+    } finally {
+      process.env.PATH = oldPath;
+    }
+  });
+
+  it("upgrades only existing Codex configuration and refreshes managed skills", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-codex-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-codex-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({ custom: true }));
+    fs.writeFileSync(path.join(repo, "AGENTS.md"), "custom agents\n");
+    const codexConfigFile = path.join(home, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
+    const configuredRepo = path.join(repo, "configured-repo");
+    fs.writeFileSync(codexConfigFile, [
+      "[mcp_servers.frontload]",
+      "command = \"old-frontload\"",
+      `args = ["mcp", "--repo", "${configuredRepo}"]`,
+      "",
+      "[mcp_servers.other]",
+      "command = \"other\"",
+      ""
+    ].join("\n"));
+    const skillFile = path.join(home, ".codex/skills/frontload/SKILL.md");
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+
+    const result = upgradeAll(repo, home);
+    const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
+
+    expect(result.project).toEqual([]);
+    expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
+    expect(codexConfig).toContain("[mcp_servers.other]");
+    expect(codexConfig).toContain('command = "frontload"');
+    expect(codexConfig).toContain(`args = ["mcp", "--repo", "${configuredRepo}"]`);
+    expect(codexConfig).not.toContain("old-frontload");
+    expect(fs.readFileSync(skillFile, "utf8")).toBe(
+      fs.readFileSync(path.resolve("plugins/codex/skills/frontload/SKILL.md"), "utf8")
+    );
+    expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(false);
+    expect(fs.readFileSync(path.join(repo, "frontload.config.json"), "utf8")).toBe(JSON.stringify({ custom: true }));
+    expect(fs.readFileSync(path.join(repo, "AGENTS.md"), "utf8")).toBe("custom agents\n");
+  });
+
+  it("upgrades existing Claude project configuration without creating new project scaffolding", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-claude-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-claude-"));
+    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({ mcpServers: { frontload: { command: "old-frontload" } } }, null, 2));
+    fs.mkdirSync(path.join(repo, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".claude/settings.json"), JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "frontload", args: ["hook", "pre-tool-use"], timeout: 3 }]
+          }
+        ]
+      }
+    }, null, 2));
+    const skillFile = path.join(home, ".claude/skills/frontload/SKILL.md");
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+
+    const result = upgradeAll(repo, home);
+    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+    const claudeSettings = JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8"));
+
+    expect(result.project).toEqual([]);
+    expect(result.agents.map((agent) => agent.agent)).toEqual(["claude"]);
+    expect(claudeConfig.mcpServers.frontload).toEqual({
+      type: "stdio",
+      command: "frontload",
+      args: ["mcp", "--repo", "."]
+    });
+    expect(claudeSettings.hooks.PreToolUse[0].matcher).toBe("Read|Bash");
+    expect(claudeSettings.hooks.PostToolUse).toBeUndefined();
+    expect(fs.readFileSync(skillFile, "utf8")).toBe(
+      fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
+    );
+    expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, "AGENTS.md"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(false);
+  });
+
+  it("upgrades existing Claude global configuration without creating project-local Claude config", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-claude-global-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-claude-global-"));
+    const configuredRepo = path.join(repo, "configured-global-repo");
+    fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({
+      mcpServers: {
+        frontload: {
+          type: "stdio",
+          command: "old-frontload",
+          args: ["mcp", "--repo", configuredRepo]
+        }
+      }
+    }, null, 2));
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".claude/settings.json"), JSON.stringify({
+      hooks: {
+        PostToolUse: [
+          {
+            matcher: "Glob",
+            hooks: [{ type: "command", command: "frontload", args: ["hook", "post-tool-use"], timeout: 3 }]
+          }
+        ]
+      }
+    }, null, 2));
+    const skillFile = path.join(home, ".claude/skills/frontload/SKILL.md");
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+
+    const result = upgradeAll(repo, home);
+    const claudeConfig = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf8"));
+    const claudeSettings = JSON.parse(fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8"));
+
+    expect(result.project).toEqual([]);
+    expect(result.agents.map((agent) => agent.agent)).toEqual(["claude"]);
+    expect(claudeConfig.mcpServers.frontload).toEqual({
+      type: "stdio",
+      command: "frontload",
+      args: ["mcp", "--repo", configuredRepo]
+    });
+    expect(claudeSettings.hooks.PreToolUse).toBeUndefined();
+    expect(claudeSettings.hooks.PostToolUse[0].matcher).toBe("Grep|Glob");
+    expect(fs.readFileSync(skillFile, "utf8")).toBe(
+      fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
+    );
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(false);
   });
 });

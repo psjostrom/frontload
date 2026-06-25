@@ -38,7 +38,7 @@ export type GlobalInstallCommand = {
 };
 
 export type GlobalInstallResult = {
-  action: "installed" | "skipped" | "manual";
+  action: "installed" | "updated" | "skipped" | "manual";
   command: string;
   args: string[];
   notes: string[];
@@ -293,8 +293,8 @@ function upsertHookGroups(file: string, definitions: HookDefinition[], force: bo
   return { path: file, action: existed ? "updated" : "created" };
 }
 
-export function buildMcpEntry(): McpEntry {
-  return { command: "frontload", args: ["mcp", "--repo", "."] };
+export function buildMcpEntry(repo = "."): McpEntry {
+  return { command: "frontload", args: ["mcp", "--repo", repo] };
 }
 
 export const mcpConfigAdapters: Record<AgentName, McpConfigAdapter> = {
@@ -422,6 +422,39 @@ export function installGlobalFrontload(packageManager = detectPackageManager(), 
   }
 }
 
+export function upgradeGlobalFrontload(packageManager = detectPackageManager(), runner: InstallRunner = execFileSync): GlobalInstallResult {
+  const wasInstalled = isGloballyInstalled();
+  const install = globalInstallCommand(packageManager, "frontload@latest");
+  try {
+    runner(install.command, install.args, { stdio: "inherit" });
+    if (!isGloballyInstalled()) {
+      return {
+        action: "manual",
+        command: install.command,
+        args: install.args,
+        notes: [
+          `The upgrade command completed, but frontload is still not resolvable on PATH. Install or expose it before restarting your editor: ${formatCommand(install)}`
+        ],
+        error: "frontload binary was not found on PATH after upgrade"
+      };
+    }
+    return {
+      action: wasInstalled ? "updated" : "installed",
+      command: install.command,
+      args: install.args,
+      notes: [wasInstalled ? "Updated frontload globally." : "Installed frontload globally."]
+    };
+  } catch (error) {
+    return {
+      action: "manual",
+      command: install.command,
+      args: install.args,
+      notes: [`Upgrade frontload manually before restarting your editor: ${formatCommand(install)}`],
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 export function initProject(repoRoot: string, force = false): WriteResult[] {
   const root = packageRoot();
   const absRepo = path.resolve(repoRoot);
@@ -436,10 +469,16 @@ export function initProject(repoRoot: string, force = false): WriteResult[] {
 function configureCodex(homeDir = os.homedir(), force = false): InstallResult {
   const configPath = mcpConfigAdapters.codex.globalPath(homeDir);
   if (!configPath) throw new Error("Codex does not support project-local MCP config from init.");
+  return configureCodexAt(configPath, homeDir, buildMcpEntry(), hookDefinitions.codex, force);
+}
+
+function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, definitions: HookDefinition[], force: boolean): InstallResult {
   const writes = [
-    mcpConfigAdapters.codex.write(configPath, buildMcpEntry(), force),
-    upsertHookGroups(path.join(homeDir, ".codex/hooks.json"), hookDefinitions.codex, force)
+    mcpConfigAdapters.codex.write(configPath, entry, force)
   ];
+  if (definitions.length > 0) {
+    writes.push(upsertHookGroups(path.join(homeDir, ".codex/hooks.json"), definitions, force));
+  }
   copyFrontloadSkill("codex", homeDir, force, writes);
   return {
     agent: "codex",
@@ -454,10 +493,16 @@ function configureCodex(homeDir = os.homedir(), force = false): InstallResult {
 function configureClaude(repoRoot: string, homeDir = os.homedir(), force = false, scope: ConfigScope = "project"): InstallResult {
   const configPath = scope === "global" ? mcpConfigAdapters.claude.globalPath(homeDir) : mcpConfigAdapters.claude.projectPath(repoRoot);
   if (!configPath) throw new Error(`Claude Code does not support ${scope} MCP config from init.`);
+  return configureClaudeAt(repoRoot, homeDir, scope, configPath, buildMcpEntry(), hookDefinitions.claude, force);
+}
+
+function configureClaudeAt(repoRoot: string, homeDir: string, scope: ConfigScope, configPath: string, entry: McpEntry, definitions: HookDefinition[], force: boolean): InstallResult {
   const writes = [
-    mcpConfigAdapters.claude.write(configPath, buildMcpEntry(), force),
-    upsertHookGroups(claudeSettingsPath(repoRoot, homeDir, scope), hookDefinitions.claude, force)
+    mcpConfigAdapters.claude.write(configPath, entry, force)
   ];
+  if (definitions.length > 0) {
+    writes.push(upsertHookGroups(claudeSettingsPath(repoRoot, homeDir, scope), definitions, force));
+  }
   copyFrontloadSkill("claude", homeDir, force, writes);
   return {
     agent: "claude",
@@ -495,5 +540,113 @@ export function initAll(repoRoot: string, agents: Array<AgentName | "all">, home
     repoRoot: absRepo,
     project: initProject(absRepo, force),
     agents: agents.flatMap((agent) => configureAgent(agent, absRepo, homeDir, force, scope))
+  };
+}
+
+function hasConfiguredFrontload(adapter: McpConfigAdapter, configPath: string | null): configPath is string {
+  if (!configPath) return false;
+  try {
+    return adapter.hasFrontloadEntry(configPath);
+  } catch {
+    return false;
+  }
+}
+
+function repoArgFromArgs(args: unknown): string | undefined {
+  if (!Array.isArray(args)) return undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--repo" && typeof args[i + 1] === "string") return args[i + 1] as string;
+    if (typeof arg === "string" && arg.startsWith("--repo=")) return arg.slice("--repo=".length);
+  }
+  return undefined;
+}
+
+function tomlTableBlock(text: string, tableName: string): string | null {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const start = lines.findIndex((line) => tomlTableName(line) === tableName);
+  if (start === -1) return null;
+  let end = start + 1;
+  while (end < lines.length && !isDifferentTomlTable(lines[end], tableName)) end += 1;
+  return lines.slice(start, end).join("\n");
+}
+
+function existingCodexRepoArg(configPath: string): string | undefined {
+  if (!fs.existsSync(configPath)) return undefined;
+  const block = tomlTableBlock(fs.readFileSync(configPath, "utf8"), "mcp_servers.frontload");
+  const match = block?.match(/^args\s*=\s*(\[.*\])$/m);
+  if (!match) return undefined;
+  try {
+    return repoArgFromArgs(JSON.parse(match[1]));
+  } catch {
+    return undefined;
+  }
+}
+
+function existingClaudeRepoArg(configPath: string): string | undefined {
+  const config = readJson<Record<string, unknown>>(configPath, {});
+  const servers = isJsonObject(config.mcpServers) ? config.mcpServers : {};
+  const frontload = isJsonObject(servers.frontload) ? servers.frontload : {};
+  return repoArgFromArgs(frontload.args);
+}
+
+function upgradeMcpEntry(agent: AgentName, configPath: string): McpEntry {
+  const repo = agent === "codex" ? existingCodexRepoArg(configPath) : existingClaudeRepoArg(configPath);
+  return buildMcpEntry(repo ?? ".");
+}
+
+function hasFrontloadHookForEvent(file: string, event: HookDefinition["event"]): boolean {
+  const config = readJson<JsonObject>(file, {});
+  const hooks = isJsonObject(config.hooks) ? config.hooks : {};
+  const groups = Array.isArray(hooks[event]) ? hooks[event] as unknown[] : [];
+  return groups.some((group) => isJsonObject(group) && Array.isArray(group.hooks) && group.hooks.some(isFrontloadHook));
+}
+
+function upgradeHookDefinitions(agent: AgentName, hooksFile: string): HookDefinition[] {
+  return hookDefinitions[agent].filter((definition) => hasFrontloadHookForEvent(hooksFile, definition.event));
+}
+
+export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult {
+  const absRepo = path.resolve(repoRoot);
+  const agents: InstallResult[] = [];
+  const codexConfig = mcpConfigAdapters.codex.globalPath(homeDir);
+  if (hasConfiguredFrontload(mcpConfigAdapters.codex, codexConfig)) {
+    agents.push(configureCodexAt(
+      codexConfig,
+      homeDir,
+      upgradeMcpEntry("codex", codexConfig),
+      upgradeHookDefinitions("codex", path.join(homeDir, ".codex/hooks.json")),
+      true
+    ));
+  }
+  const claudeProjectConfig = mcpConfigAdapters.claude.projectPath(absRepo);
+  if (hasConfiguredFrontload(mcpConfigAdapters.claude, claudeProjectConfig)) {
+    agents.push(configureClaudeAt(
+      absRepo,
+      homeDir,
+      "project",
+      claudeProjectConfig,
+      upgradeMcpEntry("claude", claudeProjectConfig),
+      upgradeHookDefinitions("claude", claudeSettingsPath(absRepo, homeDir, "project")),
+      true
+    ));
+  }
+  const claudeGlobalConfig = mcpConfigAdapters.claude.globalPath(homeDir);
+  if (hasConfiguredFrontload(mcpConfigAdapters.claude, claudeGlobalConfig)) {
+    agents.push(configureClaudeAt(
+      absRepo,
+      homeDir,
+      "global",
+      claudeGlobalConfig,
+      upgradeMcpEntry("claude", claudeGlobalConfig),
+      upgradeHookDefinitions("claude", claudeSettingsPath(absRepo, homeDir, "global")),
+      true
+    ));
+  }
+  return {
+    repoRoot: absRepo,
+    project: [],
+    agents
   };
 }
