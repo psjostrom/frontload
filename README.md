@@ -83,7 +83,7 @@ frontload budget --repo .
 ```
 
 If you already installed the package globally, use `frontload init`.
-The init command asks which agents to configure. For automation, pass `--agents codex`, `--agents claude`, `--agents all`, or `--agents none`.
+The init command shows a checkbox prompt for the agents to configure. For automation, pass `--agents codex`, `--agents claude`, `--agents all`, or `--agents none`.
 After a Frontload release, use `npx frontload@latest upgrade` to update the global package and refresh existing agent integrations.
 
 Local state is written to `.frontload/` in the target repo:
@@ -215,7 +215,7 @@ current repository:
 
 Without `--force`, existing files are left untouched.
 
-`init` then asks which agent adapters to configure:
+`init` then asks which agent adapters to configure with a checkbox prompt:
 
 - `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and trust the hooks.
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
@@ -466,7 +466,7 @@ Recommended setup path:
 npx frontload init
 ```
 
-The init command asks whether to configure Codex, Claude Code, both, or neither.
+The init command shows checkboxes for Codex and Claude Code so you can configure either, both, or neither.
 It writes each editor's real MCP and hook configuration. This is the supported
 user setup path for agent adapters.
 
