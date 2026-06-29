@@ -19,6 +19,7 @@ import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
+import { packageVersion } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
 import { parsePositiveInteger } from "./options.js";
 
@@ -73,7 +74,7 @@ function print(data: unknown): void {
 }
 
 const program = new Command();
-program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version("0.1.6");
+program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version(packageVersion);
 
 function detectedAgents(homeDir: string): AgentName[] {
   return (["codex", "claude"] as const).filter((agent) => mcpConfigAdapters[agent].detect(homeDir));
