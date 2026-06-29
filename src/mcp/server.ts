@@ -13,6 +13,7 @@ import { buildIndex } from "../indexer/indexer.js";
 import { BaselineKind, CommandSummary } from "../types.js";
 import { stateDir } from "../utils/path.js";
 import { capText } from "../utils/text.js";
+import { packageVersion } from "../version.js";
 
 export type McpTextResponse = {
   content: Array<{ type: "text"; text: string }>;
@@ -312,7 +313,7 @@ export function createMcpHandlers(repoRoot: string) {
 }
 
 export async function startMcp(repoRoot: string): Promise<void> {
-  const server = new McpServer({ name: "frontload", version: "0.1.6" });
+  const server = new McpServer({ name: "frontload", version: packageVersion });
   const handlers = createMcpHandlers(repoRoot);
   const config = loadConfig(repoRoot);
   const defaultDossierChars = Math.min(config.budgets.defaultDossierChars, config.budgets.maxToolOutputChars);
