@@ -15,7 +15,7 @@
     "extensions": [".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".kt", ".kts"]
   },
   "budgets": {
-    "defaultDossierChars": 12000,
+    "defaultDossierChars": 6000,
     "defaultReadChars": 4000,
     "maxToolOutputChars": 8000,
     "maxRawLogBytes": 5000000

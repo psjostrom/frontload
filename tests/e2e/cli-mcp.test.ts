@@ -22,6 +22,18 @@ function writeShellScript(file: string, content: string): void {
   fs.chmodSync(file, 0o755);
 }
 
+function writeNoisySearchRepo(): string {
+  const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-lean-"));
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  for (let fileIndex = 0; fileIndex < 12; fileIndex++) {
+    const lines = Array.from({ length: 40 }, (_, symbolIndex) =>
+      `export function targetReconnectSignal${fileIndex}_${symbolIndex}() { return "${fileIndex}-${symbolIndex}"; }`
+    );
+    fs.writeFileSync(path.join(repo, `src/target-${fileIndex}.ts`), `${lines.join("\n")}\n`);
+  }
+  return repo;
+}
+
 describe("e2e proof workflow", () => {
   it("runs host-aware hook subcommands through the built CLI", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-cli-"));
@@ -160,6 +172,111 @@ describe("e2e proof workflow", () => {
       outputBytes: Buffer.byteLength(text)
     });
     expect(event?.baselineBytes).toBeGreaterThan(5000);
+  });
+
+  it("returns usable default dossier output under the default MCP cap", async () => {
+    const repo = writeNoisySearchRepo();
+    const response = await createMcpHandlers(repo).dossier({
+      task: "target reconnect signal",
+      budgetChars: 12000,
+      maxFiles: 12
+    });
+    const text = response.content[0].text;
+    const data = JSON.parse(text);
+
+    expect(text.length).toBeLessThanOrEqual(8000);
+    expect(data.summary).toBe("Dossier generated.");
+    expect(data.markdown).toContain("Frontload Dossier");
+    expect(data.markdown).toContain("src/target-");
+    expect(data.files.length).toBeGreaterThan(0);
+    expect(data.ranked).toBeUndefined();
+    expect(data.summary).not.toContain("withheld");
+  });
+
+  it("returns trimmed search results instead of withholding near-budget responses", async () => {
+    const repo = writeNoisySearchRepo();
+    const response = await createMcpHandlers(repo).search({ query: "target reconnect signal", limit: 10 });
+    const text = response.content[0].text;
+    const data = JSON.parse(text);
+
+    expect(text.length).toBeLessThanOrEqual(8000);
+    expect(data.summary).toBe("Search results from index.");
+    expect(data.results.length).toBeGreaterThan(0);
+    expect(data.results[0].file.path).toContain("src/target-");
+    expect(data.results[0].file.imports).toBeUndefined();
+    expect(data.summary).not.toContain("withheld");
+  });
+
+  it("does not mark empty MCP search results as truncated", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-empty-search-"));
+    fs.writeFileSync(path.join(repo, "sample.ts"), "export const presentNeedle = 1;\n");
+
+    const response = await createMcpHandlers(repo).search({ query: "missingNeedle", limit: 10 });
+    const data = JSON.parse(response.content[0].text);
+
+    expect(data).toMatchObject({
+      summary: "Search results from index.",
+      results: []
+    });
+    expect(data.truncated).toBeUndefined();
+    expect(data.omittedResults).toBeUndefined();
+  });
+
+  it("does not trim empty-result dossiers that already fit", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-empty-dossier-"));
+    fs.writeFileSync(path.join(repo, "sample.ts"), "export const presentNeedle = 1;\n");
+
+    const response = await createMcpHandlers(repo).dossier({
+      task: "fix app",
+      budgetChars: 6000,
+      maxFiles: 12
+    });
+    const data = JSON.parse(response.content[0].text);
+
+    expect(data.summary).toBe("Dossier generated.");
+    expect(data.markdown).toContain("No strong lexical matches found");
+    expect(data.files).toEqual([]);
+    expect(data.truncated).toBe(false);
+    expect(data.omittedFiles).toBeUndefined();
+  });
+
+  it("marks omitted dossier file details as truncation without claiming markdown files were omitted", async () => {
+    const repo = writeNoisySearchRepo();
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 7000
+      }
+    }));
+
+    const response = await createMcpHandlers(repo).dossier({
+      task: "target reconnect signal",
+      budgetChars: 12000,
+      maxFiles: 12
+    });
+    const data = JSON.parse(response.content[0].text);
+
+    expect(response.content[0].text.length).toBeLessThanOrEqual(7000);
+    expect(data.truncated).toBe(true);
+    expect(data.omittedFileDetails).toBeGreaterThan(0);
+    expect(data.omittedFiles).toBeUndefined();
+    expect(data.markdown).toContain("src/target-");
+  });
+
+  it("uses repo dossier budget defaults in the CLI unless explicitly overridden", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-dossier-budget-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        defaultDossierChars: 1234
+      }
+    }));
+    fs.writeFileSync(path.join(repo, "target.ts"), "export const targetNeedle = 1;\n");
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    const configured = await execa(process.execPath, [cli, "dossier", "target needle", "--repo", repo]);
+    const explicit = await execa(process.execPath, [cli, "dossier", "target needle", "--repo", repo, "--budget", "4321"]);
+
+    expect(configured.stdout).toContain("Requested budget: 1234 chars");
+    expect(explicit.stdout).toContain("Requested budget: 4321 chars");
   });
 
   it("keeps the original MCP error when event persistence also fails", async () => {

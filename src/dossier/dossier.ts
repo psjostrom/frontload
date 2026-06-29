@@ -8,6 +8,21 @@ import { capText, redactSecrets, words } from "../utils/text.js";
 type SearchMatch = { line: number; text: string };
 type Ranked = { file: IndexedFile; score: number; why: string[]; relatedTests: string[]; matches?: SearchMatch[] };
 
+export type CompactRanked = {
+  file: {
+    path: string;
+    extension: string;
+    size: number;
+    lineCount: number;
+    isTest: boolean;
+    symbols: string[];
+  };
+  score: number;
+  why: string[];
+  relatedTests: string[];
+  matches?: SearchMatch[];
+};
+
 const genericTaskWords = new Set([
   "app",
   "data",
@@ -155,7 +170,7 @@ function noiseNotes(ranked: Ranked[]): string[] {
   return notes.length ? notes : ["Ranking confidence looks reasonable; start with the suggested read order."];
 }
 
-export async function generateDossier(repoRoot: string, task: string, budgetChars = 12000, maxFiles = 12): Promise<{ markdown: string; ranked: Ranked[]; truncated: boolean }> {
+export async function generateDossier(repoRoot: string, task: string, budgetChars = 6000, maxFiles = 12): Promise<{ markdown: string; ranked: Ranked[]; truncated: boolean }> {
   const index = await loadFreshIndex(repoRoot);
   const taskWords = taskTerms(task);
   const ranked = index.files
@@ -212,7 +227,7 @@ export async function generateDossier(repoRoot: string, task: string, budgetChar
     "",
     "This dossier intentionally omits raw file contents. Use `fl_read_budgeted` for targeted reads."
   ];
-  const capped = capText(lines.join("\n"), Math.floor(budgetChars * 1.1));
+  const capped = capText(lines.join("\n"), budgetChars);
   return { markdown: capped.text, ranked, truncated: capped.truncated };
 }
 
@@ -247,4 +262,21 @@ export async function searchIndexMeasured(repoRoot: string, query: string, limit
 
 export async function searchIndex(repoRoot: string, query: string, limit = 10): Promise<Ranked[]> {
   return (await searchIndexMeasured(repoRoot, query, limit)).results;
+}
+
+export function compactRankedResults(results: Ranked[]): CompactRanked[] {
+  return results.map((result) => ({
+    file: {
+      path: result.file.path,
+      extension: result.file.extension,
+      size: result.file.size,
+      lineCount: result.file.lineCount,
+      isTest: result.file.isTest,
+      symbols: result.file.symbols.slice(0, 8)
+    },
+    score: Math.round(result.score),
+    why: result.why,
+    relatedTests: result.relatedTests.slice(0, 5),
+    ...(result.matches?.length ? { matches: result.matches.slice(0, 3) } : {})
+  }));
 }

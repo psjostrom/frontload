@@ -7,11 +7,12 @@ import { appendEvent, budgetReport, outputSize, outputText } from "../budget/eve
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
 import { loadConfig } from "../config/config.js";
-import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
+import { CompactRanked, compactRankedResults, generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { BaselineKind, CommandSummary } from "../types.js";
 import { stateDir } from "../utils/path.js";
+import { capText } from "../utils/text.js";
 
 export type McpTextResponse = {
   content: Array<{ type: "text"; text: string }>;
@@ -96,6 +97,74 @@ function boundedJson(repoRoot: string, operation: string, data: unknown): { resp
   return { response: json(bounded), size };
 }
 
+function fitSearchData(maxToolOutputChars: number, compactResults: CompactRanked[]): unknown {
+  if (!compactResults.length) return { summary: "Search results from index.", results: [] };
+  let visible = compactResults;
+  let omittedResults = 0;
+  while (visible.length > 0) {
+    const data = {
+      summary: "Search results from index.",
+      results: visible,
+      ...(omittedResults ? { truncated: true, omittedResults } : {})
+    };
+    if (outputSize(data).chars <= maxToolOutputChars) return data;
+    omittedResults += 1;
+    visible = visible.slice(0, -1);
+  }
+  return { summary: "Search results from index.", results: [], truncated: true, omittedResults: compactResults.length };
+}
+
+function fitDossierData(
+  maxToolOutputChars: number,
+  dossier: { markdown: string; files: CompactRanked[]; truncated: boolean }
+): unknown {
+  let markdown = dossier.markdown;
+  let files = dossier.files;
+  let omittedFileDetails = 0;
+  let truncated = dossier.truncated;
+
+  const currentData = () => ({
+    summary: "Dossier generated.",
+    markdown,
+    files,
+    truncated: truncated || omittedFileDetails > 0,
+    ...(omittedFileDetails ? { omittedFileDetails } : {})
+  });
+
+  while (files.length > 0) {
+    const current = currentData();
+    if (outputSize(current).chars <= maxToolOutputChars) return current;
+    omittedFileDetails += 1;
+    files = files.slice(0, -1);
+  }
+
+  const current = currentData();
+  if (outputSize(current).chars <= maxToolOutputChars) return current;
+
+  while (markdown.length > 200) {
+    const overflow = outputSize(currentData()).chars - maxToolOutputChars;
+    const nextBudget = Math.max(200, markdown.length - Math.max(overflow + 100, 200));
+    markdown = capText(markdown, nextBudget).text;
+    truncated = true;
+    const data = {
+      summary: "Dossier generated.",
+      markdown,
+      files,
+      truncated,
+      ...(omittedFileDetails ? { omittedFileDetails } : {})
+    };
+    if (outputSize(data).chars <= maxToolOutputChars) return data;
+  }
+
+  return {
+    summary: "Dossier generated.",
+    markdown: capText(markdown, 200).text,
+    files: [],
+    truncated: true,
+    ...(omittedFileDetails ? { omittedFileDetails } : {})
+  };
+}
+
 async function measuredMcp<TInput>(
   repoRoot: string,
   operation: string,
@@ -162,17 +231,24 @@ export function createMcpHandlers(repoRoot: string) {
       }),
 
     dossier: async (input: { task: string; budgetChars: number; maxFiles: number }): Promise<McpTextResponse> =>
-      measuredMcp(repoRoot, "dossier", input, async () => ({
-        data: {
-          summary: "Dossier generated.",
-          ...(await generateDossier(repoRoot, input.task, input.budgetChars, input.maxFiles))
-        }
-      })),
+      measuredMcp(repoRoot, "dossier", input, async () => {
+        const config = loadConfig(repoRoot);
+        const effectiveBudget = Math.min(input.budgetChars, Math.max(1000, config.budgets.maxToolOutputChars - 1600));
+        const dossier = await generateDossier(repoRoot, input.task, effectiveBudget, input.maxFiles);
+        return {
+          data: fitDossierData(config.budgets.maxToolOutputChars, {
+            markdown: dossier.markdown,
+            files: compactRankedResults(dossier.ranked),
+            truncated: dossier.truncated
+          })
+        };
+      }),
 
     search: async (input: { query: string; limit: number }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "search", input, async () => {
         const measured = await searchIndexMeasured(repoRoot, input.query, input.limit);
-        const data = { summary: "Search results from index.", results: measured.results };
+        const config = loadConfig(repoRoot);
+        const data = fitSearchData(config.budgets.maxToolOutputChars, compactRankedResults(measured.results));
         return {
           data,
           baseline: {
@@ -238,9 +314,11 @@ export function createMcpHandlers(repoRoot: string) {
 export async function startMcp(repoRoot: string): Promise<void> {
   const server = new McpServer({ name: "frontload", version: "0.1.6" });
   const handlers = createMcpHandlers(repoRoot);
+  const config = loadConfig(repoRoot);
+  const defaultDossierChars = Math.min(config.budgets.defaultDossierChars, config.budgets.maxToolOutputChars);
   server.tool("fl_policy", "Return current budget and command policy. Use before running costly commands; do not use for source exploration.", {}, handlers.policy);
   server.tool("fl_repo_index", "Build or refresh the repo index. Use before dossiers/search; not needed before every read.", { force: z.boolean().optional() }, handlers.index);
-  server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().default(12000), maxFiles: z.number().default(12) }, handlers.dossier);
+  server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().default(defaultDossierChars), maxFiles: z.number().default(12) }, handlers.dossier);
   server.tool("fl_search", "Search indexed files by task terms and bounded literal content matches. Use instead of broad grep; not a full regex engine.", { query: z.string(), limit: z.number().default(10) }, handlers.search);
   server.tool(
     "fl_read_budgeted",
