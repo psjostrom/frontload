@@ -10,7 +10,7 @@ export const configSchema = z.object({
     extensions: z.array(z.string()).default([".ts", ".tsx", ".js", ".jsx", ".json", ".md"])
   }),
   budgets: z.object({
-    defaultDossierChars: z.number().int().positive().default(12000),
+    defaultDossierChars: z.number().int().positive().default(6000),
     defaultReadChars: z.number().int().positive().default(4000),
     maxToolOutputChars: z.number().int().min(64).default(8000),
     maxRawLogBytes: z.number().int().positive().default(5000000)
@@ -44,7 +44,7 @@ export const defaultConfig: FrontloadConfig = configSchema.parse({
   repoRoot: ".",
   ignore: ["node_modules/**", ".git/**", "dist/**", "build/**", "coverage/**", "**/*.lock", ".frontload/**"],
   index: { maxFileBytes: 300000, extensions: [".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".kt", ".kts"] },
-  budgets: { defaultDossierChars: 12000, defaultReadChars: 4000, maxToolOutputChars: 8000, maxRawLogBytes: 5000000 },
+  budgets: { defaultDossierChars: 6000, defaultReadChars: 4000, maxToolOutputChars: 8000, maxRawLogBytes: 5000000 },
   commands: { allowed: ["pnpm test", "pnpm vitest", "pnpm tsc", "npm test", "yarn test", "npx tsc", "git diff", "git status"], timeoutMs: 120000 },
   security: { redactSecrets: true, blockDangerousShell: true },
   localScout: { enabled: false, command: null, timeoutMs: 60000, maxOutputChars: 6000 },

@@ -253,13 +253,14 @@ program.command("index").option("--repo <repo>", "repository root", ".").action(
   print(measuredResult.output);
 });
 
-program.command("dossier").argument("<task>").option("--repo <repo>", "repository root", ".").option("--format <format>", "markdown").option("--budget <chars>", "12000").action(async (task, opts) => {
+program.command("dossier").argument("<task>").option("--repo <repo>", "repository root", ".").option("--format <format>", "markdown").option("--budget <chars>").action(async (task, opts) => {
   const repoRoot = resolveRepo(opts.repo);
+  const budgetChars = opts.budget ? Number(opts.budget) : loadConfig(repoRoot).budgets.defaultDossierChars;
   const measuredResult = await measured(
     repoRoot,
     "dossier",
     { task, opts },
-    () => generateDossier(repoRoot, task, Number(opts.budget)),
+    () => generateDossier(repoRoot, task, budgetChars),
     { output: (result) => result.markdown }
   );
   print(measuredResult.output);

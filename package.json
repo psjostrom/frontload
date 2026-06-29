@@ -1,6 +1,6 @@
 {
   "name": "frontload",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Local-first context and cost gateway for AI coding agents.",
   "type": "module",
   "packageManager": "pnpm@10.14.0",
@@ -25,7 +25,7 @@
     "test": "vitest run tests/unit",
     "test:watch": "vitest",
     "e2e": "vitest run tests/e2e",
-    "demo:fixture": "pnpm build && node dist/src/cli/index.js index --repo fixtures/react-ts-app && node dist/src/cli/index.js dossier \"Fix stale chart tooltip value after sensor reconnect\" --repo fixtures/react-ts-app --format markdown --budget 12000 > proof/sample-dossier.md && node dist/src/cli/index.js run --repo fixtures/react-ts-app --kind test -- pnpm test",
+    "demo:fixture": "pnpm build && node dist/src/cli/index.js index --repo fixtures/react-ts-app && node dist/src/cli/index.js dossier \"Fix stale chart tooltip value after sensor reconnect\" --repo fixtures/react-ts-app --format markdown --budget 6000 > proof/sample-dossier.md && node dist/src/cli/index.js run --repo fixtures/react-ts-app --kind test -- pnpm test",
     "proof": "pnpm build && pnpm test && pnpm e2e && pnpm demo:fixture && node dist/src/cli/index.js proof --repo fixtures/react-ts-app"
   },
   "dependencies": {

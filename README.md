@@ -111,7 +111,7 @@ The index records supported files, symbols, imports, dependency edges, sizes, an
 ### 2. Generate a task dossier
 
 ```bash
-frontload dossier "Add month-by-month navigation to Story screen" --repo . --budget 12000
+frontload dossier "Add month-by-month navigation to Story screen" --repo . --budget 6000
 ```
 
 A dossier includes:
@@ -259,7 +259,7 @@ Scans the repo and writes `.frontload/index.json`.
 ### `dossier`
 
 ```bash
-frontload dossier "task description" --repo . --format markdown --budget 12000
+frontload dossier "task description" --repo . --format markdown --budget 6000
 ```
 
 Generates a task-focused Markdown dossier. The `--format` flag currently accepts `markdown`; structured data is used internally by MCP tools.
@@ -368,7 +368,7 @@ Example:
     "extensions": [".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".kt", ".kts"]
   },
   "budgets": {
-    "defaultDossierChars": 12000,
+    "defaultDossierChars": 6000,
     "defaultReadChars": 4000,
     "maxToolOutputChars": 8000,
     "maxRawLogBytes": 5000000
