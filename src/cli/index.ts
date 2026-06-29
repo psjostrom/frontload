@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { emitKeypressEvents } from "node:readline";
 import readline from "node:readline/promises";
 import { Command, Option } from "commander";
 import { appendEvent, budgetReport, outputSize } from "../budget/events.js";
@@ -18,6 +19,7 @@ import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
+import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
 import { parsePositiveInteger } from "./options.js";
 
 type ResultMeasurement<T> = {
@@ -77,17 +79,57 @@ function detectedAgents(homeDir: string): AgentName[] {
   return (["codex", "claude"] as const).filter((agent) => mcpConfigAdapters[agent].detect(homeDir));
 }
 
+function renderAgentCheckboxPrompt(output: NodeJS.WriteStream, state: AgentCheckboxState, previousLineCount: number): number {
+  if (previousLineCount > 1) output.write(`\x1b[${previousLineCount - 1}F\r\x1b[J`);
+  const prompt = formatAgentCheckboxPrompt(state);
+  output.write(prompt);
+  return prompt.split("\n").length;
+}
+
+async function promptAgentCheckboxes(initialState: AgentCheckboxState): Promise<AgentName[]> {
+  const input = process.stdin;
+  const output = process.stdout;
+  emitKeypressEvents(input);
+  if (input.isTTY) input.setRawMode(true);
+  output.write("\x1b[?25l");
+
+  return new Promise((resolve, reject) => {
+    let state = initialState;
+    let renderedLines = renderAgentCheckboxPrompt(output, state, 0);
+
+    const cleanup = (): void => {
+      input.off("keypress", onKeypress);
+      if (input.isTTY) input.setRawMode(false);
+      input.pause();
+      output.write("\x1b[?25h\n");
+    };
+    const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        reject(new Error("Prompt cancelled"));
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        const agents = selectedAgents(state);
+        cleanup();
+        resolve(agents);
+        return;
+      }
+      const nextState = applyAgentCheckboxKey(state, key.name ?? _text);
+      if (nextState !== state) {
+        state = nextState;
+        renderedLines = renderAgentCheckboxPrompt(output, state, renderedLines);
+      }
+    };
+
+    input.on("keypress", onKeypress);
+  });
+}
+
 async function promptAgents(homeDir: string): Promise<ReturnType<typeof parseAgents>> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return parseAgents("all");
   const detected = detectedAgents(homeDir);
-  const defaultAgents = detected.length > 0 ? detected.join(",") : "all";
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question(`Which agents should Frontload configure? [all/codex/claude/codex,claude/none] (${defaultAgents}): ` );
-    return parseAgents(answer.trim() || defaultAgents);
-  } finally {
-    rl.close();
-  }
+  return promptAgentCheckboxes(createAgentCheckboxState(detected));
 }
 
 async function promptConfigScope(): Promise<ConfigScope> {
