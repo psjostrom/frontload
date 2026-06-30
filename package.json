@@ -15,7 +15,6 @@
     "skills",
     "hooks",
     "frontload.config.example.json",
-    "AGENTS.example.md",
     "README.md"
   ],
   "scripts": {
