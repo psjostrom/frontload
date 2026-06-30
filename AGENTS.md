@@ -71,7 +71,7 @@ Any user-visible CLI, config, plugin, hook, MCP, or install-flow change is not
 done until docs are checked.
 
 Before completion:
-1. Search `README.md`, `docs/`, `AGENTS.example.md`, `plugins/*/README.md`,
+1. Search `README.md`, `docs/`, `AGENTS.md`, `plugins/*/README.md`,
    `skills/frontload/SKILL.md`, and `plugins/*/skills/frontload/SKILL.md` for
    references to the changed behavior.
 2. Update stale command examples, setup steps, and workflow descriptions.

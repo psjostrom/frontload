@@ -18,10 +18,10 @@ describe("installer", () => {
     const result = initProject(repo);
     expect(result.map((write) => path.relative(repo, write.path))).toEqual([
       "frontload.config.json",
-      "AGENTS.md",
       ".frontload"
     ]);
     expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, "AGENTS.md"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(true);
     expect(fs.existsSync(path.join(repo, "codex/config.toml"))).toBe(false);
   });

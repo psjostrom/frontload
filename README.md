@@ -210,7 +210,6 @@ Creates starter files and the onboarded `.frontload/` state directory in the
 current repository:
 
 - `frontload.config.json`
-- `AGENTS.md`
 - `.frontload/`
 
 Without `--force`, existing files are left untouched.

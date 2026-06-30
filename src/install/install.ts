@@ -460,7 +460,6 @@ export function initProject(repoRoot: string, force = false): WriteResult[] {
   const absRepo = path.resolve(repoRoot);
   const writes: WriteResult[] = [
     copyFile(path.join(root, "frontload.config.example.json"), path.join(absRepo, "frontload.config.json"), force),
-    copyFile(path.join(root, "AGENTS.example.md"), path.join(absRepo, "AGENTS.md"), force),
     ensureDir(path.join(absRepo, ".frontload"))
   ];
   return writes;
