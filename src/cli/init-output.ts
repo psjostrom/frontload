@@ -1,0 +1,126 @@
+import os from "node:os";
+import path from "node:path";
+import type { GlobalInstallResult, InitResult, InstallResult, WriteResult } from "../install/install.js";
+
+type InitOutput = Partial<InitResult> & {
+  globalInstall?: GlobalInstallResult;
+  summary?: string;
+};
+
+function box(title: string, body: string[]): string[] {
+  const border = `+${"-".repeat(title.length + 2)}+`;
+  return [
+    border,
+    `| ${title} |`,
+    border,
+    ...body
+  ];
+}
+
+function displayPath(file: string, root?: string): string {
+  const home = os.homedir();
+  if (root) {
+    const relative = path.relative(root, file);
+    if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) return relative;
+  }
+  if (file === home) return "~";
+  if (file.startsWith(`${home}${path.sep}`)) return `~/${path.relative(home, file)}`;
+  return file;
+}
+
+function commandText(globalInstall: GlobalInstallResult): string {
+  return [globalInstall.command, ...globalInstall.args].join(" ");
+}
+
+function writeLine(write: WriteResult, root?: string): string {
+  return `  [${write.action}] ${displayPath(write.path, root)}`;
+}
+
+function globalInstallLines(globalInstall?: GlobalInstallResult): string[] {
+  if (!globalInstall) return ["  [skipped] No agent setup selected, so no global command was needed."];
+  if (globalInstall.action === "skipped") {
+    return ["  [skipped] frontload is already available on PATH."];
+  }
+  return [
+    `  [${globalInstall.action}] ${commandText(globalInstall)}`,
+    ...globalInstall.notes.map((note) => `  ${note}`),
+    ...(globalInstall.error ? [`  Error: ${globalInstall.error}`] : [])
+  ];
+}
+
+function projectLines(result: InitOutput): string[] {
+  if (!result.repoRoot || !result.project) return ["  Project files were not changed."];
+  return [
+    `  Repo: ${result.repoRoot}`,
+    ...result.project.map((write) => writeLine(write, result.repoRoot))
+  ];
+}
+
+function agentTitle(agent: InstallResult): string {
+  return `${agent.agent[0].toUpperCase()}${agent.agent.slice(1)} setup`;
+}
+
+function agentLines(agent: InstallResult): string[] {
+  return [
+    ...agent.writes.map((write) => writeLine(write)),
+    ...(agent.notes.length > 0 ? ["", "  Notes:", ...agent.notes.map((note) => `  - ${note}`)] : [])
+  ];
+}
+
+function nextSteps(result: InitOutput): string[] {
+  if (result.globalInstall?.action === "manual") {
+    return [
+      `  1. Run ${commandText(result.globalInstall)}.`,
+      "  2. Run frontload init again and choose your agent."
+    ];
+  }
+  const agents = result.agents?.map((agent) => agent.agent) ?? [];
+  if (agents.includes("codex") && agents.includes("claude")) {
+    return [
+      "  1. Restart Codex and Claude Code.",
+      "  2. Run /mcp in each editor and confirm frontload is listed.",
+      "  3. In Codex, open /hooks to review and approve the Frontload command hooks."
+    ];
+  }
+  if (agents.includes("codex")) {
+    return [
+      "  1. Restart Codex.",
+      "  2. Run /mcp and confirm frontload is listed.",
+      "  3. Open /hooks to review and approve the Frontload command hooks."
+    ];
+  }
+  if (agents.includes("claude")) {
+    return [
+      "  1. Restart Claude Code.",
+      "  2. Run /mcp and confirm frontload is listed."
+    ];
+  }
+  return [
+    "  1. Review frontload.config.json.",
+    "  2. Run frontload index when you want to build repo context."
+  ];
+}
+
+export function formatInitOutput(result: InitOutput): string {
+  const lines: string[] = [
+    result.globalInstall?.action === "manual" ? "Frontload init needs one more step" : "Frontload init complete"
+  ];
+  if (result.summary) lines.push(result.summary);
+  lines.push("");
+  lines.push(...box("Global command", globalInstallLines(result.globalInstall)), "");
+
+  if (result.repoRoot || result.project) {
+    lines.push(...box("Project files", projectLines(result)), "");
+  }
+
+  if (result.agents && result.agents.length > 0) {
+    for (const agent of result.agents) {
+      lines.push(...box(agentTitle(agent), agentLines(agent)), "");
+    }
+  } else {
+    lines.push(...box("Agent setup", ["  Agent setup was not changed."]), "");
+  }
+
+  lines.push(...box("Next steps", nextSteps(result)));
+  return `${lines.join("\n")}\n`;
+}

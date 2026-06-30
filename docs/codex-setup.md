@@ -23,7 +23,7 @@ Init also merges Frontload command hooks into `~/.codex/hooks.json`:
   Frontload commands.
 - `PostToolUse` bounds oversized Bash output that Codex exposes to hooks.
 
-Open `/hooks` once after installation to review and trust the Frontload command
+Open `/hooks` once after installation to review and approve the Frontload command
 hooks. Codex stores trust against the exact hook definition, so a changed hook
 may require review again.
 
