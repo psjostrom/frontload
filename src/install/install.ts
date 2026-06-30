@@ -484,7 +484,7 @@ function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, 
     writes,
     notes: [
       "Restart Codex after init completes; /mcp should show the frontload server.",
-      "Open /hooks once to review and trust the Frontload command hooks."
+      "Open /hooks once to review and approve the Frontload command hooks."
     ]
   };
 }

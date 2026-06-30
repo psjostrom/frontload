@@ -27,7 +27,7 @@ Choose Codex when prompted. Init merges the Frontload MCP server into the
 expected Codex config, copies the skill to `~/.codex/skills/frontload`, and
 points MCP at the installed `frontload` CLI. It also merges PreToolUse and
 PostToolUse Bash hooks into `~/.codex/hooks.json`. Open `/hooks` once to review
-and trust those command hooks.
+and approve those command hooks.
 
 For local development, build the repo and point Codex at this plugin folder.
 

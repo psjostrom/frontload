@@ -348,6 +348,21 @@ describe("e2e proof workflow", () => {
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
   });
 
+  it("prints human-friendly init output instead of raw JSON", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-cli-output-"));
+    const result = await execa(
+      process.execPath,
+      [path.resolve("dist/src/cli/index.js"), "init", "--agents", "none", "--repo", repo]
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Frontload init complete");
+    expect(result.stdout).toContain("| Project files |");
+    expect(result.stdout).toContain("[created] frontload.config.json");
+    expect(result.stdout).toContain("Agent setup was not changed.");
+    expect(result.stdout).not.toContain("\"repoRoot\"");
+  });
+
   it("delegates upgrade refresh to the installed frontload binary", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-reexec-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-home-reexec-"));

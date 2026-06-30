@@ -69,7 +69,7 @@ PreToolUse uses the shared rewrite policy. PostToolUse replaces an oversized
 observed Bash response using Codex's supported top-level `decision: "block"`
 and bounded `reason` response. Documentation must describe this as enforcement
 for interceptable Bash calls, not complete native-tool parity. The user must
-trust the installed command hook once with Codex `/hooks`.
+approve the installed command hook once with Codex `/hooks`.
 
 ## Configuration
 

@@ -21,6 +21,7 @@ import { BaselineKind } from "../types.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
 import { packageVersion } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
+import { formatInitOutput } from "./init-output.js";
 import { parsePositiveInteger } from "./options.js";
 
 type ResultMeasurement<T> = {
@@ -226,14 +227,14 @@ program
     const scope = opts.scope === undefined && configuresAgent(agents, "claude") ? await promptConfigScope() : parseConfigScope(opts.scope);
     const globalInstall = agents.length > 0 ? await ensureGlobalFrontload(!!opts.yes) : undefined;
     if (globalInstall?.action === "manual") {
-      print({ summary: "Frontload was not installed globally; MCP config was not written.", globalInstall });
+      process.stdout.write(formatInitOutput({ summary: "Frontload was not installed globally; MCP config was not written.", globalInstall }));
       process.exitCode = 1;
       return;
     }
-    print({
+    process.stdout.write(formatInitOutput({
       globalInstall,
       ...initAll(resolveRepo(opts.repo), agents, homeDir, !!opts.force, scope)
-    });
+    }));
   });
 
 program

@@ -216,7 +216,7 @@ Without `--force`, existing files are left untouched.
 
 `init` then asks which agent adapters to configure with a checkbox prompt:
 
-- `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and trust the hooks.
+- `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
 
 If `frontload` is not already installed globally, `init` prompts before running
