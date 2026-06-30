@@ -71,8 +71,9 @@ Any user-visible CLI, config, plugin, hook, MCP, or install-flow change is not
 done until docs are checked.
 
 Before completion:
-1. Search `README.md`, `docs/`, `plugins/*/README.md`, and
-   `skills/frontload/SKILL.md` for references to the changed behavior.
+1. Search `README.md`, `docs/`, `AGENTS.example.md`, `plugins/*/README.md`,
+   `skills/frontload/SKILL.md`, and `plugins/*/skills/frontload/SKILL.md` for
+   references to the changed behavior.
 2. Update stale command examples, setup steps, and workflow descriptions.
 3. If no docs describe a new user-visible feature, add the smallest useful
    documentation in the existing style.
@@ -94,14 +95,25 @@ Before completion:
   agent prefix.
 - Release PR titles should also be conventional, for example
   `chore(release): bump version to 0.1.10`; do not use bare `Release 0.1.10`.
-- When a merge or push fails, check CI status with `gh pr checks` and read the
-  failure logs before retrying. Never blindly force-push or retry.
+- When a merge or push fails, inspect the exact error first. If a PR exists and
+  the failure is due to pending or failed checks, run
+  `gh pr checks <pr-or-branch>` and read the failure logs before retrying. Never
+  blindly force-push or retry.
 
 ## Release Notes
 
-Before a release, run `git log <last-release>..main --oneline` and summarize all
-changes since the previous release. Do not assume the latest commit is the whole
-release.
+Before a release, identify the previous release ref before writing notes. Prefer
+the latest `vX.Y.Z` tag once release tags exist. Until then, find the previous
+release commit on `main` with
+`git log main --oneline --grep='Release' --grep='chore(release)'` and use that
+commit SHA. Then run:
+
+```bash
+git log <previous-release-ref>..main --oneline
+```
+
+If no previous release ref exists, run `git log main --oneline` and summarize
+all commits. Do not assume the latest commit is the whole release.
 
 The package version lives in `package.json`; `src/version.ts` reads that value at
 runtime. Keep the lockfile consistent when package metadata changes.
