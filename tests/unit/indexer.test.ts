@@ -27,6 +27,27 @@ describe("indexer", () => {
     expect(index.files[0].symbols).toContain("Sample");
   });
 
+  it("ignores generated, worktree, and local-sensitive defaults during scans", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-default-ignore-index-"));
+    const files = {
+      ".codex/worktrees/w/src/worktree.ts": "export const worktree = 1;\n",
+      ".next/server.ts": "export const nextGenerated = 1;\n",
+      "out/generated.ts": "export const outGenerated = 1;\n",
+      "nested/.env.local": "SECRET=value\n",
+      "notes/AGENTS.local.md": "# local notes\n",
+      "src/kept.ts": "export const kept = 1;\n"
+    };
+    for (const [file, content] of Object.entries(files)) {
+      const absolute = path.join(dir, file);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, content);
+    }
+
+    const index = await buildIndex(dir);
+
+    expect(index.files.map((file) => file.path)).toEqual(["src/kept.ts"]);
+  });
+
   it("freshens changed files without a manual full index command", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-fresh-change-"));
     fs.mkdirSync(path.join(dir, "src"), { recursive: true });

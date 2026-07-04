@@ -4,8 +4,8 @@ Date: 2026-06-09
 
 This report records a local trial of `frontload` against two sibling repos:
 
-- `/Users/psjostrom/code/strimma`
-- `/Users/psjostrom/code/springa`
+- `<strimma-repo>`
+- `<springa-repo>`
 
 The comparison uses recent feature/fix commits as feature-sized work units. Token counts use the same estimate as `frontload`: `chars / 4`.
 

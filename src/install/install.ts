@@ -465,10 +465,10 @@ export function initProject(repoRoot: string, force = false): WriteResult[] {
   return writes;
 }
 
-function configureCodex(homeDir = os.homedir(), force = false): InstallResult {
+function configureCodex(repoRoot: string, homeDir = os.homedir(), force = false): InstallResult {
   const configPath = mcpConfigAdapters.codex.globalPath(homeDir);
   if (!configPath) throw new Error("Codex does not support project-local MCP config from init.");
-  return configureCodexAt(configPath, homeDir, buildMcpEntry(), hookDefinitions.codex, force);
+  return configureCodexAt(configPath, homeDir, buildMcpEntry(repoRoot), hookDefinitions.codex, force);
 }
 
 function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, definitions: HookDefinition[], force: boolean): InstallResult {
@@ -492,7 +492,7 @@ function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, 
 function configureClaude(repoRoot: string, homeDir = os.homedir(), force = false, scope: ConfigScope = "project"): InstallResult {
   const configPath = scope === "global" ? mcpConfigAdapters.claude.globalPath(homeDir) : mcpConfigAdapters.claude.projectPath(repoRoot);
   if (!configPath) throw new Error(`Claude Code does not support ${scope} MCP config from init.`);
-  return configureClaudeAt(repoRoot, homeDir, scope, configPath, buildMcpEntry(), hookDefinitions.claude, force);
+  return configureClaudeAt(repoRoot, homeDir, scope, configPath, buildMcpEntry(repoRoot), hookDefinitions.claude, force);
 }
 
 function configureClaudeAt(repoRoot: string, homeDir: string, scope: ConfigScope, configPath: string, entry: McpEntry, definitions: HookDefinition[], force: boolean): InstallResult {
@@ -511,8 +511,8 @@ function configureClaudeAt(repoRoot: string, homeDir: string, scope: ConfigScope
 }
 
 function configureAgent(agent: AgentName | "all", repoRoot: string, homeDir = os.homedir(), force = false, scope: ConfigScope = "project"): InstallResult[] {
-  if (agent === "all") return [configureCodex(homeDir, force), configureClaude(repoRoot, homeDir, force, scope)];
-  if (agent === "codex") return [configureCodex(homeDir, force)];
+  if (agent === "all") return [configureCodex(repoRoot, homeDir, force), configureClaude(repoRoot, homeDir, force, scope)];
+  if (agent === "codex") return [configureCodex(repoRoot, homeDir, force)];
   if (agent === "claude") return [configureClaude(repoRoot, homeDir, force, scope)];
   throw new Error(`Unknown agent: ${agent}`);
 }
@@ -590,9 +590,10 @@ function existingClaudeRepoArg(configPath: string): string | undefined {
   return repoArgFromArgs(frontload.args);
 }
 
-function upgradeMcpEntry(agent: AgentName, configPath: string): McpEntry {
+function upgradeMcpEntry(agent: AgentName, configPath: string, repoRoot: string): McpEntry {
   const repo = agent === "codex" ? existingCodexRepoArg(configPath) : existingClaudeRepoArg(configPath);
-  return buildMcpEntry(repo ?? ".");
+  const pinnedRepo = !repo || repo === "." ? repoRoot : path.isAbsolute(repo) ? repo : path.resolve(repoRoot, repo);
+  return buildMcpEntry(pinnedRepo);
 }
 
 function hasFrontloadHookForEvent(file: string, event: HookDefinition["event"]): boolean {
@@ -614,7 +615,7 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
     agents.push(configureCodexAt(
       codexConfig,
       homeDir,
-      upgradeMcpEntry("codex", codexConfig),
+      upgradeMcpEntry("codex", codexConfig, absRepo),
       upgradeHookDefinitions("codex", path.join(homeDir, ".codex/hooks.json")),
       true
     ));
@@ -626,7 +627,7 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
       homeDir,
       "project",
       claudeProjectConfig,
-      upgradeMcpEntry("claude", claudeProjectConfig),
+      upgradeMcpEntry("claude", claudeProjectConfig, absRepo),
       upgradeHookDefinitions("claude", claudeSettingsPath(absRepo, homeDir, "project")),
       true
     ));
@@ -638,7 +639,7 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
       homeDir,
       "global",
       claudeGlobalConfig,
-      upgradeMcpEntry("claude", claudeGlobalConfig),
+      upgradeMcpEntry("claude", claudeGlobalConfig, absRepo),
       upgradeHookDefinitions("claude", claudeSettingsPath(absRepo, homeDir, "global")),
       true
     ));

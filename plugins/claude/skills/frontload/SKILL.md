@@ -10,7 +10,7 @@ Default workflow:
 
 1. Start with the Frontload repo dossier tool for the current task.
 2. Search the index when the dossier is noisy or when you need concrete symbols.
-3. Read contiguous file windows through budgeted reads instead of raw full-file reads. Prefer the raw `excerpt` for edits when `editSafe` is true, and use `numberedExcerpt` only for line references.
+3. Read contiguous file windows through budgeted reads instead of raw full-file reads. Prefer the raw `excerpt` for edits when `editSafe` is true, and use `numberedExcerpt` only for line references when it is present.
 4. Run tests, typechecks, lint, and build commands through summarized command tools.
 5. Use diff summaries before reviewing changes.
 6. Check the budget report before repeating repair loops.

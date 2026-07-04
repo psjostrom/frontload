@@ -6,9 +6,13 @@ Fix stale chart tooltip value after sensor reconnect
 
 ## Budget
 
-- Requested budget: 12000 chars
-- Estimated token equivalent: 3000
-- Generated at: 2026-06-09T12:33:22.215Z
+- Requested budget: 6000 chars
+- Estimated token equivalent: 1500
+- Generated at: 2026-07-04T14:48:39.408Z
+
+## Ranking confidence
+
+- Ranking confidence looks reasonable; start with the suggested read order.
 
 ## Related tests / commands
 
@@ -18,27 +22,27 @@ Fix stale chart tooltip value after sensor reconnect
 ## Most relevant files
 
 1. `src/chart/ChartTooltip.test.tsx`
-   - score: 49
+   - score: 34
    - why: path match, import/export match, related test, dependency edge
    - symbols: none
    - related tests: src/chart/ChartTooltip.test.tsx
 2. `src/chart/ChartTooltip.tsx`
-   - score: 36
+   - score: 30
    - why: path match, related test, dependency edge
    - symbols: formatTooltipValue, resetTooltipCache, ChartTooltip, ChartTooltipProps
    - related tests: src/chart/ChartTooltip.test.tsx
 3. `src/chart/useGlucoseSeries.ts`
-   - score: 36
+   - score: 30
    - why: path match, import/export match, dependency edge
    - symbols: useGlucoseSeries, GlucosePoint
    - related tests: none
 4. `src/chart/GlucoseChart.tsx`
-   - score: 24
+   - score: 18
    - why: path match, dependency edge
    - symbols: GlucoseChart
    - related tests: none
 5. `src/sensor/sensorConnectionStore.ts`
-   - score: 24
+   - score: 18
    - why: path match, dependency edge
    - symbols: getSensorConnection, reconnectSensor, resetSensorConnection, SensorConnection
    - related tests: none

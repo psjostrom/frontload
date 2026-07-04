@@ -6,9 +6,17 @@
     "dist/**",
     "build/**",
     "coverage/**",
+    ".next/**",
+    "out/**",
+    ".Codex/worktrees/**",
+    ".codex/worktrees/**",
+    "**/.env*",
+    "**/*.local.md",
     "ios/Pods/**",
     "android/.gradle/**",
-    "**/*.lock"
+    "**/*.lock",
+    "*.tsbuildinfo",
+    ".frontload/**"
   ],
   "index": {
     "maxFileBytes": 300000,

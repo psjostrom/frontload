@@ -11,6 +11,12 @@ import { createMcpHandlers } from "../../src/mcp/server.js";
 
 const fixture = path.resolve("fixtures/react-ts-app");
 
+function sanitizeProofSummary(summary: string, extraPaths: string[] = []): string {
+  let sanitized = summary.split(fixture).join("<fixture-repo>").split(os.homedir()).join("<home>");
+  for (const [index, extraPath] of extraPaths.entries()) sanitized = sanitized.split(extraPath).join(`<temp-repo-${index + 1}>`);
+  return sanitized;
+}
+
 function makeEventPersistenceFail(repo: string): void {
   fs.mkdirSync(path.join(repo, ".frontload"), { recursive: true });
   fs.mkdirSync(path.join(repo, ".frontload/events.jsonl"));
@@ -205,6 +211,57 @@ describe("e2e proof workflow", () => {
     expect(data.results[0].file.path).toContain("src/target-");
     expect(data.results[0].file.imports).toBeUndefined();
     expect(data.summary).not.toContain("withheld");
+  });
+
+  it("returns usable default budgeted read output instead of withholding duplicate excerpts", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-readable-read-"));
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    const lines = Array.from({ length: 120 }, (_, i) => {
+      const marker = i === 60 ? " targetNeedle" : "";
+      return `export const paddedLine${String(i + 1).padStart(3, "0")} = "${"x".repeat(70)}";${marker}`;
+    });
+    fs.writeFileSync(path.join(repo, "src/large.ts"), `${lines.join("\n")}\n`);
+
+    const response = await createMcpHandlers(repo).read({
+      path: "src/large.ts",
+      budgetChars: 4000,
+      query: "targetNeedle"
+    });
+    const text = response.content[0].text;
+    const data = JSON.parse(text);
+
+    expect(text.length).toBeLessThanOrEqual(8000);
+    expect(data.summary).toContain("Returned contiguous lines");
+    expect(data.summary).not.toContain("withheld");
+    expect(data.excerpt).toContain("targetNeedle");
+    expect(data.numberedExcerpt).toBeUndefined();
+  });
+
+  it("fits budgeted reads under configured MCP output caps", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-read-cap-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 2400
+      }
+    }));
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    const lines = Array.from({ length: 90 }, (_, i) => {
+      const marker = i === 60 ? " targetNeedle" : "";
+      return `export const paddedLine${String(i + 1).padStart(3, "0")} = "${"x".repeat(130)}";${marker}`;
+    });
+    fs.writeFileSync(path.join(repo, "src/large.ts"), `${lines.join("\n")}\n`);
+
+    const response = await createMcpHandlers(repo).read({
+      path: "src/large.ts",
+      budgetChars: 3500,
+      query: "targetNeedle"
+    });
+    const text = response.content[0].text;
+    const data = JSON.parse(text);
+
+    expect(text.length).toBeLessThanOrEqual(2400);
+    expect(data.summary).not.toContain("withheld");
+    expect(data.excerpt).toContain("targetNeedle");
   });
 
   it("does not mark empty MCP search results as truncated", async () => {
@@ -429,20 +486,30 @@ describe("e2e proof workflow", () => {
     fs.writeFileSync("proof/mcp-transcript.jsonl", "");
     fs.rmSync(path.join(fixture, ".frontload/events.jsonl"), { force: true });
     const handlers = createMcpHandlers(fixture);
+    const runRepo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-proof-run-"));
+    fs.writeFileSync(path.join(runRepo, "frontload.config.json"), JSON.stringify({ commands: { allowed: ["node fail.js"] } }));
+    fs.writeFileSync(path.join(runRepo, "fail.js"), [
+      "console.error('FAIL src/chart/ChartTooltip.test.tsx');",
+      "console.error('x updates stale chart tooltip value after sensor reconnect');",
+      "process.exit(1);",
+      ""
+    ].join("\n"));
+    const runHandlers = createMcpHandlers(runRepo);
     const calls = [
       ["fl_policy", await handlers.policy({})],
       ["fl_repo_index", await handlers.index({ force: true })],
       ["fl_repo_dossier", await handlers.dossier({ task: "Fix stale chart tooltip value after sensor reconnect", budgetChars: 12000, maxFiles: 12 })],
       ["fl_search", await handlers.search({ query: ".", limit: 2 })],
       ["fl_read_budgeted", await handlers.read({ path: "src/chart/ChartTooltip.tsx", budgetChars: 4000, query: "tooltip reconnect" })],
-      ["fl_run_summary", await handlers.run({ kind: "test", command: "pnpm test" })],
+      ["fl_run_summary", await runHandlers.run({ kind: "test", command: "node fail.js" })],
       ["fl_git_diff_summary", await handlers.diff({ staged: false })],
       ["fl_budget_report", await handlers.budget({})]
     ] as const;
     for (const [tool, response] of calls) {
       const text = response.content[0].text;
       const data = JSON.parse(text);
-      fs.appendFileSync("proof/mcp-transcript.jsonl", JSON.stringify({ tool, response: { summary: data.summary ?? "ok" } }) + "\n");
+      const summary = sanitizeProofSummary(data.summary ?? "ok", [runRepo]);
+      fs.appendFileSync("proof/mcp-transcript.jsonl", JSON.stringify({ tool, response: { summary } }) + "\n");
     }
     const index = JSON.parse(calls.find(([tool]) => tool === "fl_repo_index")![1].content[0].text);
     const dossier = JSON.parse(calls.find(([tool]) => tool === "fl_repo_dossier")![1].content[0].text);
@@ -458,8 +525,10 @@ describe("e2e proof workflow", () => {
     const events = readEvents(fixture);
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: "mcp", operation: "read", baselineKind: "full-file" }),
-      expect.objectContaining({ source: "mcp", operation: "run", baselineKind: "raw-command-output" }),
       expect.objectContaining({ source: "mcp", operation: "search", baselineKind: "unbounded-search-results" })
+    ]));
+    expect(readEvents(runRepo)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "mcp", operation: "run", baselineKind: "raw-command-output" })
     ]));
     expect(events.find((event) => event.operation === "dossier")?.baselineBytes).toBeUndefined();
     const operations: Record<string, string> = {
@@ -471,8 +540,10 @@ describe("e2e proof workflow", () => {
       fl_run_summary: "run",
       fl_git_diff_summary: "diff"
     };
+    const runEvents = readEvents(runRepo);
     for (const [tool, response] of calls.filter(([name]) => name !== "fl_budget_report")) {
-      const event = events.find((candidate) => candidate.operation === operations[tool]);
+      const eventLog = tool === "fl_run_summary" ? runEvents : events;
+      const event = eventLog.find((candidate) => candidate.operation === operations[tool]);
       expect(event?.outputBytes).toBe(Buffer.byteLength(response.content[0].text));
     }
     expect(fs.existsSync("proof/mcp-transcript.jsonl")).toBe(true);

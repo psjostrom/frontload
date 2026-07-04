@@ -11,7 +11,7 @@ If `frontload` is not already installed globally, init prompts before running th
 ```toml
 [mcp_servers.frontload]
 command = "frontload"
-args = ["mcp", "--repo", "."]
+args = ["mcp", "--repo", "/path/to/your/repo"]
 ```
 
 Restart Codex after init. Codex reads MCP servers from its global config at startup.
