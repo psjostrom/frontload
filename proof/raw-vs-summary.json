@@ -1,13 +1,13 @@
 {
   "command": "pnpm test",
-  "rawOutputBytes": 1264,
+  "rawOutputBytes": 1359,
   "summaryChars": 147,
-  "compressionRatio": 0.11629746835443038,
+  "compressionRatio": 0.10816777041942605,
   "preservedFindings": [
     "updates stale chart tooltip value after sensor reconnect",
     "src/chart/ChartTooltip.test.tsx",
     "expected '92 mg/dL' to be '93 mg/dL' // Object.is equality"
   ],
-  "events": 7,
-  "fullLog": "/Users/psjostrom/code/frontload/fixtures/react-ts-app/.frontload/logs/2026-06-09T12-33-22-528Z-test.log"
+  "events": 9,
+  "fullLog": "<repo>/.frontload/logs/2026-07-04T14-48-39-741Z-test.log"
 }

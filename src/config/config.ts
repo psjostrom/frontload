@@ -42,7 +42,22 @@ export type FrontloadConfig = z.infer<typeof configSchema>;
 
 export const defaultConfig: FrontloadConfig = configSchema.parse({
   repoRoot: ".",
-  ignore: ["node_modules/**", ".git/**", "dist/**", "build/**", "coverage/**", "**/*.lock", ".frontload/**"],
+  ignore: [
+    "node_modules/**",
+    ".git/**",
+    "dist/**",
+    "build/**",
+    "coverage/**",
+    ".next/**",
+    "out/**",
+    ".Codex/worktrees/**",
+    ".codex/worktrees/**",
+    "**/.env*",
+    "**/*.local.md",
+    "**/*.lock",
+    "*.tsbuildinfo",
+    ".frontload/**"
+  ],
   index: { maxFileBytes: 300000, extensions: [".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".kt", ".kts"] },
   budgets: { defaultDossierChars: 6000, defaultReadChars: 4000, maxToolOutputChars: 8000, maxRawLogBytes: 5000000 },
   commands: { allowed: ["pnpm test", "pnpm vitest", "pnpm tsc", "npm test", "yarn test", "npx tsc", "git diff", "git status"], timeoutMs: 120000 },

@@ -108,7 +108,7 @@ function parseFindings(output: string, exitCode: number | null): Finding[] {
   parseVitestFindings(output, findings);
   parseGradleDetektFindings(output, findings);
   parseRustFindings(output, findings);
-  if (!findings.length) {
+  if (!findings.length && exitCode !== 0) {
     parseGenericFindings(output, findings);
   }
   if (!findings.length && exitCode !== 0 && output.trim()) {

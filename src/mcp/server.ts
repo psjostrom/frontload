@@ -261,11 +261,13 @@ export function createMcpHandlers(repoRoot: string) {
 
     read: async (input: ReadInput): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "read", input, () => {
+        const config = loadConfig(repoRoot);
         const data = readBudgeted(repoRoot, input.path, {
           budgetChars: input.budgetChars,
           query: input.query,
           startLine: input.startLine,
-          lineCount: input.lineCount
+          lineCount: input.lineCount,
+          maxSerializedChars: config.budgets.maxToolOutputChars
         });
         return { data, baseline: { bytes: data.fileSize, kind: "full-file" } };
       }),
@@ -323,7 +325,7 @@ export async function startMcp(repoRoot: string): Promise<void> {
   server.tool("fl_search", "Search indexed files by task terms and bounded literal content matches. Use instead of broad grep; not a full regex engine.", { query: z.string(), limit: z.number().default(10) }, handlers.search);
   server.tool(
     "fl_read_budgeted",
-    "Read a contiguous, bounded file excerpt. The `excerpt` field is edit-safe when `editSafe` is true; use `numberedExcerpt` for line-number display.",
+    "Read a contiguous, bounded file excerpt. The `excerpt` field is edit-safe when `editSafe` is true; use optional `numberedExcerpt` for line-number display when present.",
     {
       path: z.string(),
       query: z.string().optional(),

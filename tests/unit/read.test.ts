@@ -45,6 +45,40 @@ describe("budgeted read", () => {
     expect(result.editSafe).toBe(true);
   });
 
+  it("omits duplicate numbered output when it would exceed the default tool cap", () => {
+    const dir = tempRepo();
+    const lines = Array.from({ length: 120 }, (_, i) => {
+      const marker = i === 60 ? " targetNeedle" : "";
+      return `export const paddedLine${String(i + 1).padStart(3, "0")} = "${"x".repeat(70)}";${marker}`;
+    });
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "src/large.ts"), `${lines.join("\n")}\n`);
+
+    const result = readBudgeted(dir, "src/large.ts", { budgetChars: 4000, query: "targetNeedle" });
+    const visibleChars = JSON.stringify(result, null, 2).length + 1;
+
+    expect(result.excerpt).toContain("targetNeedle");
+    expect(result.numberedExcerpt).toBeUndefined();
+    expect(visibleChars).toBeLessThanOrEqual(8000);
+  });
+
+  it("fits query reads under caller-visible caps without dropping the match", () => {
+    const dir = tempRepo();
+    const lines = Array.from({ length: 90 }, (_, i) => {
+      const marker = i === 60 ? " targetNeedle" : "";
+      return `export const paddedLine${String(i + 1).padStart(3, "0")} = "${"x".repeat(130)}";${marker}`;
+    });
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "src/large.ts"), `${lines.join("\n")}\n`);
+
+    const result = readBudgeted(dir, "src/large.ts", { budgetChars: 3500, query: "targetNeedle", maxSerializedChars: 2400 });
+    const visibleChars = JSON.stringify(result, null, 2).length + 1;
+
+    expect(result.excerpt).toContain("targetNeedle");
+    expect(result.numberedExcerpt).toBeUndefined();
+    expect(visibleChars).toBeLessThanOrEqual(2400);
+  });
+
   it("uses query only to choose the first contiguous window", () => {
     const dir = tempRepo();
     const lines = writeLines(path.join(dir, "src/query.ts"), 40);

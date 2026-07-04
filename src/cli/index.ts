@@ -74,6 +74,12 @@ function print(data: unknown): void {
   process.stdout.write(serializeOutput(data));
 }
 
+function proofDisplayPath(repoRoot: string, filePath: string): string {
+  const relative = path.relative(repoRoot, filePath);
+  if (!relative.startsWith("..") && !path.isAbsolute(relative)) return `<repo>/${relative}`;
+  return path.basename(filePath);
+}
+
 const program = new Command();
 program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version(packageVersion);
 
@@ -426,7 +432,15 @@ program.command("proof").option("--repo <repo>", "repository root", ".").action(
     raw.match(/Expected:.*|expected .*93 mg\/dL.*/i)?.[0] ?? raw.match(/Received:.*/i)?.[0]
   ].filter(Boolean);
   const summaryChars = preservedFindings.join("\n").length;
-  fs.writeFileSync("proof/raw-vs-summary.json", JSON.stringify({ command: "pnpm test", rawOutputBytes: Buffer.byteLength(raw), summaryChars, compressionRatio: raw ? summaryChars / Buffer.byteLength(raw) : 0, preservedFindings, events: events.operations, fullLog: latestLog ? path.join(logDir, latestLog) : null }, null, 2));
+  fs.writeFileSync("proof/raw-vs-summary.json", JSON.stringify({
+    command: "pnpm test",
+    rawOutputBytes: Buffer.byteLength(raw),
+    summaryChars,
+    compressionRatio: raw ? summaryChars / Buffer.byteLength(raw) : 0,
+    preservedFindings,
+    events: events.operations,
+    fullLog: latestLog ? proofDisplayPath(repoRoot, path.join(logDir, latestLog)) : null
+  }, null, 2));
   if (!fs.existsSync("proof/mcp-transcript.jsonl")) fs.writeFileSync("proof/mcp-transcript.jsonl", "");
   print("Proof files generated.");
 });

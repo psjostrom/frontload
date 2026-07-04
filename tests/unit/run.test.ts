@@ -23,6 +23,20 @@ describe("command summary", () => {
     expect(result.compressionRatio).toBeLessThan(0.5);
   });
 
+  it("does not infer error findings from successful output text", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-run-success-"));
+    const output = [
+      "✓ tests/unit/run.test.ts (6 tests) 1200ms",
+      "  ✓ command summary > summarizes failing test output and compresses verbose logs 517ms"
+    ].join("\n");
+
+    const result = await runSummary(dir, "test", ["node", "-e", `console.log(${JSON.stringify(output)})`], true);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.findings).toEqual([]);
+    expect(result.summary).not.toContain("[error]");
+  });
+
   it("allows common Gradle test commands when Gradle metadata exists", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-gradle-"));
     fs.writeFileSync(path.join(dir, "build.gradle.kts"), "");

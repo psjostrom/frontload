@@ -8,6 +8,7 @@ export type ReadBudgetedOptions = {
   query?: string;
   startLine?: number;
   lineCount?: number;
+  maxSerializedChars?: number;
 };
 
 export type ReadBudgetedResult = {
@@ -19,7 +20,7 @@ export type ReadBudgetedResult = {
   startLine: number;
   endLine: number;
   excerpt: string;
-  numberedExcerpt: string;
+  numberedExcerpt?: string;
   truncated: boolean;
   editSafe: boolean;
   nextRead?: string;
@@ -107,6 +108,10 @@ function readCommand(filePath: string, startLine: number, budgetChars: number, l
   ].filter(Boolean).join(" ");
 }
 
+function serializedChars(value: unknown): number {
+  return `${JSON.stringify(value, null, 2)}\n`.length;
+}
+
 export function readBudgeted(repoRoot: string, filePath: string, options: ReadBudgetedOptions = {}): ReadBudgetedResult {
   const budgetChars = positiveInteger(options.budgetChars ?? 4000, "budgetChars");
   const requestedLineCount = options.lineCount === undefined ? undefined : positiveInteger(options.lineCount, "lineCount");
@@ -117,34 +122,52 @@ export function readBudgeted(repoRoot: string, filePath: string, options: ReadBu
   const totalLines = bounds.length;
   const queryLine = firstQueryLine(textRaw, bounds, options.query);
   const requestedStartLine = explicitStartLine ?? (queryLine ? queryWindowStartLine(textRaw, bounds, queryLine, budgetChars, requestedLineCount) : 1);
-  const startLine = clamp(Math.trunc(requestedStartLine), 1, totalLines);
-  const endLine = endLineForBudget(textRaw, bounds, startLine, budgetChars, requestedLineCount);
-  const rawExcerpt = textRaw.slice(bounds[startLine - 1].start, bounds[endLine - 1].end);
-  const redacted = redactSecrets(rawExcerpt);
+  let startLine = clamp(Math.trunc(requestedStartLine), 1, totalLines);
   const index = loadIndex(repoRoot);
   const suggestedNextReads = index?.edges.filter((e) => e.from === filePath).map((e) => e.to).slice(0, 5) ?? [];
-  const nextRead = endLine < totalLines ? readCommand(filePath, endLine + 1, budgetChars, requestedLineCount) : undefined;
-  const windowSize = Math.max(1, endLine - startLine + 1);
-  const previousStart = requestedLineCount ? Math.max(1, startLine - requestedLineCount) : Math.max(1, startLine - windowSize);
-  const previousRead = startLine > 1 ? readCommand(filePath, previousStart, budgetChars, requestedLineCount) : undefined;
-  const truncated = startLine > 1 || endLine < totalLines;
-  return {
-    summary: truncated
-      ? `Returned contiguous lines ${startLine}-${endLine} for ${filePath}; full file is ${textRaw.length} chars.`
-      : `Returned full file ${filePath}.`,
-    path: filePath,
-    fileSize: Buffer.byteLength(textRaw),
-    totalLines,
-    requestedBudget: budgetChars,
-    excerpt: redacted.text,
-    numberedExcerpt: lineNumbered(redacted.text, startLine),
-    startLine,
-    endLine,
-    truncated,
-    editSafe: redacted.redactions === 0,
-    ...(nextRead ? { nextRead } : {}),
-    ...(previousRead ? { previousRead } : {}),
-    suggestedNextReads,
-    redactions: redacted.redactions
+
+  let endLine = endLineForBudget(textRaw, bounds, startLine, budgetChars, requestedLineCount);
+  const visibleBudget = positiveInteger(options.maxSerializedChars ?? Math.max(1000, budgetChars * 2), "maxSerializedChars");
+
+  const buildResult = (includeNumberedExcerpt: boolean): ReadBudgetedResult => {
+    const rawExcerpt = textRaw.slice(bounds[startLine - 1].start, bounds[endLine - 1].end);
+    const redacted = redactSecrets(rawExcerpt);
+    const nextRead = endLine < totalLines ? readCommand(filePath, endLine + 1, budgetChars, requestedLineCount) : undefined;
+    const windowSize = Math.max(1, endLine - startLine + 1);
+    const previousStart = requestedLineCount ? Math.max(1, startLine - requestedLineCount) : Math.max(1, startLine - windowSize);
+    const previousRead = startLine > 1 ? readCommand(filePath, previousStart, budgetChars, requestedLineCount) : undefined;
+    const truncated = startLine > 1 || endLine < totalLines;
+    return {
+      summary: truncated
+        ? `Returned contiguous lines ${startLine}-${endLine} for ${filePath}; full file is ${textRaw.length} chars.`
+        : `Returned full file ${filePath}.`,
+      path: filePath,
+      fileSize: Buffer.byteLength(textRaw),
+      totalLines,
+      requestedBudget: budgetChars,
+      excerpt: redacted.text,
+      ...(includeNumberedExcerpt ? { numberedExcerpt: lineNumbered(redacted.text, startLine) } : {}),
+      startLine,
+      endLine,
+      truncated,
+      editSafe: redacted.redactions === 0,
+      ...(nextRead ? { nextRead } : {}),
+      ...(previousRead ? { previousRead } : {}),
+      suggestedNextReads,
+      redactions: redacted.redactions
+    };
   };
+
+  let result = buildResult(true);
+  if (serializedChars(result) > visibleBudget) result = buildResult(false);
+  while (serializedChars(result) > visibleBudget && endLine > startLine) {
+    const keepLine = queryLine && queryLine >= startLine && queryLine <= endLine ? queryLine : null;
+    if (keepLine && startLine < keepLine && (endLine === keepLine || keepLine - startLine >= endLine - keepLine)) {
+      startLine += 1;
+    } else {
+      endLine -= 1;
+    }
+    result = buildResult(false);
+  }
+  return result;
 }

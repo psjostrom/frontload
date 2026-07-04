@@ -138,8 +138,9 @@ frontload read app/src/main/java/com/example/StoryViewModel.kt --repo . --budget
 
 Budgeted reads:
 
-- return line-numbered output
-- cap the response to the requested character budget
+- return a raw, contiguous `excerpt` that is safe to use for edits when `editSafe` is true
+- include `numberedExcerpt` for line references when it fits the response budget
+- cap the excerpt and keep the visible response bounded
 - include relevant imports, symbols, and query matches when truncating
 - redact common secret patterns
 - suggest next files from import edges when available
@@ -214,7 +215,10 @@ current repository:
 
 Without `--force`, existing files are left untouched.
 
-`init` then asks which agent adapters to configure with a checkbox prompt:
+`init` then asks which agent adapters to configure with a checkbox prompt. MCP
+entries created by init pin `--repo` to the absolute path of the initialized
+repository so editor launch directories do not change which repo Frontload
+serves:
 
 - `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
@@ -359,7 +363,14 @@ Example:
     "dist/**",
     "build/**",
     "coverage/**",
+    ".next/**",
+    "out/**",
+    ".Codex/worktrees/**",
+    ".codex/worktrees/**",
+    "**/.env*",
+    "**/*.local.md",
     "**/*.lock",
+    "*.tsbuildinfo",
     ".frontload/**"
   ],
   "index": {

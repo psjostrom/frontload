@@ -31,6 +31,16 @@ describe("config", () => {
     expect(loadConfig(process.cwd()).ignore).toContain("node_modules/**");
   });
 
+  it("includes common generated directories in the starter ignore globs", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-config-default-ignore-"));
+    const example = JSON.parse(fs.readFileSync(path.resolve("frontload.config.example.json"), "utf8")) as { ignore: string[] };
+
+    const expected = [".frontload/**", ".next/**", "out/**", "*.tsbuildinfo", ".Codex/worktrees/**", ".codex/worktrees/**", "**/.env*", "**/*.local.md"];
+
+    expect(loadConfig(dir).ignore).toEqual(expect.arrayContaining(expected));
+    expect(example.ignore).toEqual(expect.arrayContaining(expected));
+  });
+
   it("provides gate defaults", () => {
     const gate = loadConfig(process.cwd()).gate;
     expect(gate).toEqual({
