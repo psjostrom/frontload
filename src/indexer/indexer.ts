@@ -83,7 +83,8 @@ type ScanResult = {
 };
 
 async function scanIndexableFiles(repoRoot: string, config: FrontloadConfig): Promise<ScanResult> {
-  const entries = await fg(["**/*"], {
+  const patterns = config.index.extensions.map((extension) => `**/*${extension}`);
+  const entries = await fg(patterns, {
     cwd: repoRoot,
     dot: true,
     onlyFiles: true,

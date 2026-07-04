@@ -35,7 +35,7 @@ describe("config", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-config-default-ignore-"));
     const example = JSON.parse(fs.readFileSync(path.resolve("frontload.config.example.json"), "utf8")) as { ignore: string[] };
 
-    const expected = [".frontload/**", ".next/**", "out/**", "*.tsbuildinfo", ".Codex/worktrees/**", ".codex/worktrees/**", "**/.env*", "**/*.local.md"];
+    const expected = [".frontload/**", ".next/**", "out/**", "*.tsbuildinfo", ".Codex/**", ".codex/**", "**/.env*", "**/*.local.md"];
 
     expect(loadConfig(dir).ignore).toEqual(expect.arrayContaining(expected));
     expect(example.ignore).toEqual(expect.arrayContaining(expected));
@@ -60,9 +60,10 @@ describe("config", () => {
     expect(gate.rewriteCommands).toBe(true);
   });
 
-  it("documents gate controls in the primary README configuration example", () => {
+  it("documents hook controls in the primary README configuration example", () => {
     const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
-    expect(readme).toContain("controls indexing, budgets, command allowlists, security defaults, and gate enforcement");
+    expect(readme).toContain("controls indexing, budgets, command allowlists, security");
+    expect(readme).toContain("hook enforcement");
     expect(readme).toContain('"maxReadLines": 200');
   });
 });

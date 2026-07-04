@@ -30,6 +30,7 @@ describe("indexer", () => {
   it("ignores generated, worktree, and local-sensitive defaults during scans", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-default-ignore-index-"));
     const files = {
+      ".Codex/worktrees/noisy/generated.ts": "export const hiddenAgentState = 1;\n",
       ".codex/worktrees/w/src/worktree.ts": "export const worktree = 1;\n",
       ".next/server.ts": "export const nextGenerated = 1;\n",
       "out/generated.ts": "export const outGenerated = 1;\n",

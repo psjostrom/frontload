@@ -1,9 +1,13 @@
 # MCP Tools
 
-This project uses `@modelcontextprotocol/sdk` with imports from:
+Frontload exposes MCP tools so supported agents can use the same bounded
+workflow as the CLI. Most users get these tools by running:
 
-- `@modelcontextprotocol/sdk/server/mcp.js`
-- `@modelcontextprotocol/sdk/server/stdio.js`
+```bash
+npx frontload init
+```
+
+Restart your editor after init so the MCP client loads the new server config.
 
 Tools:
 
