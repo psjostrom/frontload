@@ -83,7 +83,8 @@ Before completion:
 `main` must have a clean, conventional history like Strimma and Springa.
 
 - Use PRs into `main`; do not push feature work directly to `main`.
-- Branch names may use `codex/...`, but branch names are not commit messages.
+- Branch names should describe the work, not the tool. Do not use `codex/...`,
+  agent names, or other tool prefixes unless explicitly requested.
 - The PR title is the future `main` commit title. Write it as a conventional
   commit: `feat: ...`, `fix: ...`, `docs: ...`, `test: ...`, `refactor: ...`,
   `ci: ...`, or `chore(...): ...`.
