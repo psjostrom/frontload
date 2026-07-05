@@ -1,44 +1,36 @@
 # Frontload for Claude Code
 
-This folder packages Frontload as a Claude Code plugin.
+Use Frontload with Claude Code to give the agent repo dossiers, budgeted reads,
+summarized command output, diff summaries, and budget reports through MCP.
 
-It bundles:
+## Setup
 
-- a Claude plugin manifest
-- a Frontload skill
-- Frontload PreToolUse and PostToolUse hook templates
-
-## Local Development
-
-From the repository root:
+From the repository where you want Frontload enabled:
 
 ```bash
-pnpm install
-pnpm build
+npx frontload init --agents claude
 ```
 
-User setup:
+You can also run the interactive setup and choose Claude Code:
 
 ```bash
 npx frontload init
 ```
 
-Choose Claude Code when prompted. Init writes the MCP server entry to
-project `.mcp.json` by default, or `~/.claude.json` with `--scope global`.
-It also writes the gate hook to Claude settings and copies the skill to
+Init writes the MCP server entry to project `.mcp.json` by default, or to
+`~/.claude.json` with `--scope global`. It also writes Frontload hooks to the
+matching Claude settings file and copies the skill to
 `~/.claude/skills/frontload`.
 
-For local development, test the repo plugin with Claude Code:
+Restart Claude Code after init. Inside Claude Code, use `/mcp` to verify the
+Frontload MCP server is connected.
 
-```bash
-claude --plugin-dir ./plugins/claude
-```
-
-Inside Claude Code, use `/mcp` to verify the Frontload MCP server is connected.
+If `frontload` is not already installed globally, init prompts before running
+the matching global install command for your package manager.
 
 ## Behavior
 
-When the plugin is enabled, Claude Code can call Frontload MCP tools for:
+When setup is complete, Claude Code can call Frontload MCP tools for:
 
 - repo indexing
 - task dossiers
@@ -49,8 +41,20 @@ When the plugin is enabled, Claude Code can call Frontload MCP tools for:
 - budget reports
 
 The skill tells Claude to prefer those tools before broad raw exploration.
+
 The PreToolUse hook rewrites configured test/lint/typecheck and broad shell
 commands through Frontload, caps native Read windows, and blocks configured
 noisy reads. The PostToolUse hook bounds native Grep and Glob output while
 preserving each tool's response schema. Both hooks are inert outside
-repositories containing `.frontload`.
+repositories containing `.frontload/`.
+
+## Local Plugin Development
+
+Most users do not need this section. To test this checked-in plugin package
+from a Frontload source checkout, build the project first:
+
+```bash
+pnpm install
+pnpm build
+claude --plugin-dir ./plugins/claude
+```

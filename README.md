@@ -1,142 +1,124 @@
 # frontload
 
-`frontload` is a local-first context and cost gateway for coding agents.
+`frontload` is a local-first context and cost gateway for AI coding agents.
 
-It helps an expensive coding agent work from compact, relevant context instead of repeatedly reading the whole repository, dumping raw test logs into chat, and rediscovering the same files on every loop.
+It helps agents start from a compact repo map, read only the file windows they
+need, summarize command output, and track how much model-visible context was
+saved. Source code and command logs stay on your machine. Frontload does not
+call an LLM API.
 
-The core idea is simple:
+## Quick Start
+
+Run this from the repository where you want agents to use Frontload:
+
+```bash
+npx frontload init
+```
+
+`init` creates the project state Frontload needs:
+
+- `frontload.config.json`
+- `.frontload/`
+
+It also asks which agent integrations to configure. Choose Codex, Claude Code,
+both, or neither. For automation, use one of these:
+
+```bash
+npx frontload init --agents codex
+npx frontload init --agents claude
+npx frontload init --agents all
+npx frontload init --agents none
+```
+
+If `frontload` is not already available on your `PATH`, `init` prompts before
+installing the package globally with your package manager. Restart your editor
+after init completes; MCP clients load server configuration at startup.
+
+Add `.frontload/` to your repository's `.gitignore`.
+
+## What You Get
+
+Frontload gives coding agents a smaller, more deliberate workflow:
 
 ```text
 repo index -> task dossier -> budgeted reads -> summarized commands -> budget report
 ```
 
-Source code stays local. `frontload` does not call an LLM API.
+The main capabilities are:
 
-## Why
+- repo indexing with paths, symbols, imports, and file metadata
+- task dossiers that rank likely files and suggested tests
+- budgeted file reads with redaction and paging hints
+- summarized test, lint, typecheck, and build output with full logs kept locally
+- compact git diff summaries
+- budget reports showing measured context savings
+- MCP tools so supported agents can use the same workflow directly
 
-Agentic coding gets expensive when the agent:
-
-- explores a repo from scratch every turn
-- reads large source, fixture, generated, or docs files when only a small excerpt is useful
-- pastes raw test, typecheck, build, or lint output into model context
-- repeats repair loops without seeing how much context each loop costs
-- treats docs, tests, generated files, and source files as equally relevant
-
-`frontload` gives the agent smaller and more deliberate inputs:
-
-- a compact repository index with paths, symbols, imports, and file metadata
-- a task dossier that ranks likely files and flags noisy rankings
-- budgeted file reads with line numbers and redaction
-- command summaries that preserve failures while storing full logs locally
-- diff and cost reports that quantify how much context was saved
-- an MCP server so Codex can use the same tools directly
-
-## Status
-
-This is an early local tool. It is useful for measuring and shaping context, but it is not a replacement for judgment. Ranking is lexical and heuristic, not semantic. You should still verify suggested files and tests.
-
-## Install
-
-Requirements:
+## Requirements
 
 - Node.js 20+
-- pnpm
 - git
-
-From this repository:
-
-```bash
-pnpm install
-pnpm build
-```
-
-The CLI binary is built at:
-
-```bash
-dist/src/cli/index.js
-```
-
-During local development, run it with:
-
-```bash
-node dist/src/cli/index.js --help
-```
-
-If installed as a package, the binary name is:
-
-```bash
-frontload
-```
-
-## Quick Start
-
-In a target repository:
-
-```bash
-npx frontload init
-frontload doctor
-frontload index --repo .
-frontload dossier "Fix stale chart tooltip value after sensor reconnect" --repo .
-frontload read src/chart/ChartTooltip.tsx --repo . --budget 4000
-frontload run --repo . --kind test -- pnpm test
-frontload budget --repo .
-```
-
-If you already installed the package globally, use `frontload init`.
-The init command shows a checkbox prompt for the agents to configure. For automation, pass `--agents codex`, `--agents claude`, `--agents all`, or `--agents none`.
-After a Frontload release, use `npx frontload@latest upgrade` to update the global package and refresh existing agent integrations.
-
-Local state is written to `.frontload/` in the target repo:
-
-```text
-.frontload/
-  index.json
-  events.jsonl
-  logs/
-  cache/
-```
-
-Add `.frontload/` to the target repo's `.gitignore`.
+- a package manager available through `npx`, `npm`, `pnpm`, or `yarn`
 
 ## Daily Workflow
 
-### 1. Index the repo
+### 1. Initialize Once
+
+```bash
+npx frontload init
+```
+
+Use `--agents` when you do not want the interactive checkbox prompt:
+
+```bash
+npx frontload init --agents codex
+```
+
+For Codex, open `/hooks` once after installation to review and approve the
+Frontload command hooks. For Claude Code, choose whether MCP config should be
+written to the project or global config when prompted.
+
+### 2. Index the Repo
 
 ```bash
 frontload index --repo .
 ```
 
-The index records supported files, symbols, imports, dependency edges, sizes, and basic categories. It intentionally ignores common heavy paths such as `node_modules`, build output, coverage, lockfiles, and `.frontload`.
+The index records supported files, symbols, imports, dependency edges, sizes,
+and basic categories. It scans only configured literal file extensions and
+ignores common heavy paths such as `node_modules`, build output, coverage,
+lockfiles, agent worktrees, framework caches, and `.frontload`.
 
-### 2. Generate a task dossier
+### 3. Generate a Task Dossier
 
 ```bash
-frontload dossier "Add month-by-month navigation to Story screen" --repo . --budget 6000
+frontload dossier "Fix stale chart tooltip value after sensor reconnect" --repo .
 ```
 
-A dossier includes:
+A dossier gives the agent a compact starting point:
 
-- task description
-- requested context budget
-- ranking confidence notes
-- likely test commands
-- most relevant files with scores and reasons
+- likely files, with scores and reasons
 - suggested read order
+- likely test commands
 - dependency notes
+- ranking confidence notes
 
-If the ranking confidence section says the result is noisy, search with more concrete terms:
+If the ranking confidence section says results are noisy, search with concrete
+domain words, filenames, or symbols:
 
 ```bash
 frontload search "StoryViewModel viewedMonth YearMonth navigation" --repo . --limit 12
 ```
 
-### 3. Read only what is needed
+### 4. Read Only What Is Needed
 
 ```bash
-frontload read app/src/main/java/com/example/StoryViewModel.kt --repo . --budget 4000 --query viewedMonth
+frontload read src/chart/ChartTooltip.tsx --repo . --budget 4000
+frontload read src/chart/ChartTooltip.tsx --repo . --budget 4000 --query reconnect
 ```
 
-Budgeted reads:
+Budgeted reads return bounded excerpts, line numbers, redaction for common
+secret patterns, and paging hints for larger files.
 
 - return a raw, contiguous `excerpt` that is safe to use for edits when `editSafe` is true
 - include `numberedExcerpt` for line references when it fits the response budget
@@ -145,25 +127,22 @@ Budgeted reads:
 - redact common secret patterns
 - suggest next files from import edges when available
 
-### 4. Run commands through summaries
+### 5. Run Commands Through Summaries
 
 ```bash
 frontload run --repo . --kind test -- pnpm test
 frontload run --repo . --kind typecheck -- pnpm tsc --noEmit
-frontload run --repo . --kind test -- ./gradlew testDebugUnitTest
+frontload run --repo . --kind lint -- pnpm lint
 ```
 
-The full raw log is stored under `.frontload/logs/`. The agent sees a compact summary with exit code, duration, preserved findings, and the log path.
+The full raw log is stored under `.frontload/logs/`. The agent sees a compact
+summary with exit code, duration, preserved failures, and the log path.
 
-`frontload` allows commands from `frontload.config.json` and also discovers common safe project commands from:
+Frontload allows commands from `frontload.config.json` and discovers common safe
+project commands from `package.json`, Gradle metadata, and `Cargo.toml`. Use
+`--allow-unconfigured` only for a trusted one-off local command.
 
-- `package.json` scripts
-- Gradle metadata such as `gradlew` or `build.gradle.kts`
-- `Cargo.toml`
-
-Use `--allow-unconfigured` only when you intentionally want to run a command outside those allowlists.
-
-### 5. Inspect diffs and cost
+### 6. Inspect Diff and Cost
 
 ```bash
 frontload diff --repo .
@@ -171,30 +150,49 @@ frontload budget --repo .
 frontload compare-cost --repo . --base HEAD~1 --head HEAD
 ```
 
-`compare-cost` reports:
+`frontload diff` summarizes changed files without dumping the full patch.
+`frontload budget` reports measured savings for logged operations.
+`frontload compare-cost` compares logged Frontload output against raw changed
+files and patch baselines for a git range.
 
-- full changed-file baseline tokens
-- patch baseline tokens
-- logged `frontload` output tokens
-- savings versus full-file and patch baselines
-- changed files with category and size data
+## Agent Setup
 
-This is the command to use when you want to prove whether the workflow actually reduced context burden.
+`npx frontload init` is the supported setup path for agent integrations.
 
-`frontload budget` also reports per-operation savings when Frontload observed an
-exact before/after pair:
+### Codex
 
-- command summaries versus captured raw command output
-- budgeted reads versus full-file bytes
-- diff summaries versus raw patch bytes
-- bounded search versus the same unbounded Frontload search result set
-- local-scout output versus uncapped local command output
-- PostToolUse hook replacements versus observed native tool output
+```bash
+npx frontload init --agents codex
+```
 
-Indexing, dossiers, policy output, and compare-cost remain explicitly
-unmeasured because they do not have an honest native-output equivalent.
-Negative savings mean the measured Frontload response used more bytes than its
-baseline; the report keeps that overhead instead of hiding it.
+Init merges the Frontload MCP server into `~/.codex/config.toml`, copies the
+Frontload skill to `~/.codex/skills/frontload`, and merges Frontload command
+hooks into `~/.codex/hooks.json`.
+
+Open `/hooks` once after installation to approve the command hooks. The hooks
+apply only in repositories that contain `.frontload/`.
+
+Codex hook coverage follows the hook runtime Codex exposes: Frontload rewrites
+supported Bash calls before execution and bounds oversized Bash output after
+execution. Codex does not currently expose Claude-equivalent native
+Read/Grep/Glob hook names.
+
+See [docs/codex-setup.md](docs/codex-setup.md) for details.
+
+### Claude Code
+
+```bash
+npx frontload init --agents claude
+```
+
+Init writes the Frontload MCP entry to project `.mcp.json` by default, or to
+`~/.claude.json` with `--scope global`. It also writes Frontload hooks to the
+matching Claude settings file and copies the skill to
+`~/.claude/skills/frontload`.
+
+Claude hooks can bound native reads, rewrite broad or configured shell commands,
+and bound noisy Grep/Glob output. The hooks apply only in repositories that
+contain `.frontload/`.
 
 ## CLI Reference
 
@@ -205,14 +203,10 @@ frontload init
 frontload init --agents codex,claude
 frontload init --agents none
 frontload init --force
+frontload init --yes
 ```
 
-Creates starter files and the onboarded `.frontload/` state directory in the
-current repository:
-
-- `frontload.config.json`
-- `.frontload/`
-
+Creates starter files and `.frontload/` state in the current repository.
 Without `--force`, existing files are left untouched.
 
 `init` then asks which agent adapters to configure with a checkbox prompt. MCP
@@ -224,8 +218,9 @@ serves:
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
 
 If `frontload` is not already installed globally, `init` prompts before running
-the package-manager-specific global install command. Restart the editor after
-init completes; MCP clients load server config at startup.
+the package-manager-specific global install command. Use `--yes` to approve the
+global install prompt in automation. Restart the editor after init completes;
+MCP clients load server config at startup.
 
 ### `upgrade`
 
@@ -235,13 +230,15 @@ frontload upgrade --yes
 frontload upgrade --repo .
 ```
 
-Updates the global `frontload` package with the current package manager's
-global install command, then refreshes only agent integrations that already
-contain a Frontload MCP entry.
+Updates the global `frontload` package, then refreshes only agent integrations
+that already contain a Frontload MCP entry. It does not create starter project
+files or configure new agents.
 
-Upgrade refreshes MCP config, hooks, and copied Frontload skills for existing
-Codex and Claude Code integrations. It does not create starter project files
-and does not configure new agents just because their config directories exist.
+After a release, you can also run:
+
+```bash
+npx frontload@latest upgrade
+```
 
 ### `doctor`
 
@@ -249,7 +246,7 @@ and does not configure new agents just because their config directories exist.
 frontload doctor --repo .
 ```
 
-Checks basic environment and state directory writability.
+Checks the local environment and Frontload state directory.
 
 ### `index`
 
@@ -257,7 +254,10 @@ Checks basic environment and state directory writability.
 frontload index --repo .
 ```
 
-Scans the repo and writes `.frontload/index.json`.
+Scans the repo and writes `.frontload/index.json`. The `stats.ignoredCount`
+field counts files that matched the configured index extensions but were skipped
+by index limits, such as `maxFileBytes`; it does not require a repo-wide count
+of every unsupported file type.
 
 ### `dossier`
 
@@ -265,7 +265,8 @@ Scans the repo and writes `.frontload/index.json`.
 frontload dossier "task description" --repo . --format markdown --budget 6000
 ```
 
-Generates a task-focused Markdown dossier. The `--format` flag currently accepts `markdown`; structured data is used internally by MCP tools.
+Generates a task-focused Markdown dossier. The `--format` flag currently accepts
+`markdown`; structured data is used internally by MCP tools.
 
 ### `search`
 
@@ -292,7 +293,8 @@ frontload run --repo . --kind typecheck -- pnpm tsc --noEmit
 frontload run --repo . --kind lint -- pnpm lint
 ```
 
-Runs a configured or discovered command and summarizes output. Kinds are `test`, `typecheck`, `lint`, or `generic`.
+Runs a configured or discovered command and summarizes output. Kinds are
+`test`, `typecheck`, `lint`, or `generic`.
 
 ### `diff`
 
@@ -301,7 +303,8 @@ frontload diff --repo .
 frontload diff --repo . --staged
 ```
 
-Summarizes changed files, categories, and risky changes without dumping the full patch.
+Summarizes changed files, categories, and risky changes without dumping the full
+patch.
 
 ### `compare-cost`
 
@@ -309,7 +312,8 @@ Summarizes changed files, categories, and risky changes without dumping the full
 frontload compare-cost --repo . --base HEAD~1 --head HEAD
 ```
 
-Compares logged `frontload` context against raw changed-file and patch baselines for a git range.
+Compares logged Frontload context against raw changed-file and patch baselines
+for a git range.
 
 ### `budget`
 
@@ -318,19 +322,8 @@ frontload budget --repo .
 ```
 
 Reports logged operations, exact measured baseline/output bytes, signed net
-savings, unmeasured operation counts, largest operations, and the last 20
-events. Search savings compare bounded versus unbounded Frontload results; they
-are not presented as native grep savings.
-
-Token estimates use `chars / 4`. Treat them as directional, not billing-grade.
-
-### `validate-plugins`
-
-```bash
-frontload validate-plugins --repo .
-```
-
-Validates the bundled Codex and Claude plugin packages with the project's TypeScript/Zod schemas. This checks manifests, hooks, and skill files without requiring Python.
+savings, unmeasured operation counts, largest operations, and recent events.
+Token estimates use `chars / 4`; treat them as directional, not billing-grade.
 
 ### `mcp`
 
@@ -338,19 +331,13 @@ Validates the bundled Codex and Claude plugin packages with the project's TypeSc
 frontload mcp --repo .
 ```
 
-Starts the MCP stdio server for the repo.
-
-### `proof`
-
-```bash
-pnpm proof
-```
-
-Builds the project, runs tests and e2e checks, runs the fixture demo, and writes proof artifacts under `proof/`.
+Starts the MCP stdio server for the repo. Most users get this configured through
+`frontload init`.
 
 ## Configuration
 
-`frontload.config.json` controls indexing, budgets, command allowlists, security defaults, and gate enforcement.
+`frontload.config.json` controls indexing, budgets, command allowlists, security
+defaults, and hook enforcement.
 
 Example:
 
@@ -359,19 +346,40 @@ Example:
   "repoRoot": ".",
   "ignore": [
     "node_modules/**",
+    "**/node_modules/**",
     ".git/**",
+    "**/.git/**",
     "dist/**",
+    "**/dist/**",
     "build/**",
+    "**/build/**",
     "coverage/**",
+    "**/coverage/**",
     ".next/**",
+    "**/.next/**",
     "out/**",
-    ".Codex/worktrees/**",
-    ".codex/worktrees/**",
+    "**/out/**",
+    ".turbo/**",
+    "**/.turbo/**",
+    ".cache/**",
+    "**/.cache/**",
+    ".expo/**",
+    "**/.expo/**",
+    ".Codex/**",
+    "**/.Codex/**",
+    ".codex/**",
+    "**/.codex/**",
+    ".gradle/**",
+    "**/.gradle/**",
+    "Pods/**",
+    "**/Pods/**",
     "**/.env*",
     "**/*.local.md",
     "**/*.lock",
     "*.tsbuildinfo",
-    ".frontload/**"
+    "**/*.tsbuildinfo",
+    ".frontload/**",
+    "**/.frontload/**"
   ],
   "index": {
     "maxFileBytes": 300000,
@@ -414,95 +422,9 @@ Example:
 }
 ```
 
-Defaults are defined in `src/config/config.ts`.
-
-## Codex and MCP
-
-`frontload` can be used directly by Codex through MCP.
-
-Build the project:
-
-```bash
-pnpm build
-```
-
-Start the MCP server for a repo:
-
-```bash
-frontload mcp --repo /path/to/repo
-```
-
-The MCP server exposes:
-
-- `fl_policy`
-- `fl_repo_index`
-- `fl_repo_dossier`
-- `fl_search`
-- `fl_read_budgeted`
-- `fl_run_summary`
-- `fl_git_diff_summary`
-- `fl_budget_report`
-- `fl_local_scout`
-
-See:
-
-- `docs/codex-setup.md`
-- `docs/mcp-tools.md`
-- `skills/frontload/SKILL.md`
-
-## Plugins
-
-This repository includes plugin adapter packages for both Codex and Claude Code:
-
-```text
-plugins/
-  codex/
-    .codex-plugin/plugin.json
-    hooks/hooks.json
-    skills/frontload/SKILL.md
-  claude/
-    .claude-plugin/plugin.json
-    hooks/hooks.json
-    skills/frontload/SKILL.md
-```
-
-The shared implementation lives in the CLI runtime. Plugin folders carry skills
-and hook templates only; MCP registration is written by `frontload init` into
-the real editor config files.
-
-Recommended setup path:
-
-```bash
-npx frontload init
-```
-
-The init command shows checkboxes for Codex and Claude Code so you can configure either, both, or neither.
-It writes each editor's real MCP and hook configuration. This is the supported
-user setup path for agent adapters.
-
-Host enforcement follows the hooks each editor currently exposes:
-
-| Host | PreToolUse | PostToolUse | Current limitation |
-| --- | --- | --- | --- |
-| Claude Code | Bounds Read and rewrites Bash | Bounds Grep and Glob output | Structured output is compacted without changing the native response schema |
-| Codex | Rewrites interceptable Bash | Bounds interceptable Bash output | No native Read/Grep/Glob hook parity |
-
-Codex command hooks require one review through `/hooks`. All Frontload hook
-handlers are inert unless the active repository contains `.frontload`.
-
-For local development from this repository, build first and point hosts at the
-repo plugin folders:
-
-```bash
-pnpm build
-claude --plugin-dir ./plugins/claude
-```
-
-Validate both bundled plugins with:
-
-```bash
-frontload validate-plugins --repo .
-```
+`index.extensions` values are treated as literal extensions. A leading dot is
+optional (`"json"` is normalized to `".json"`), and glob expressions are not
+expanded.
 
 ## Ranking Policy
 
@@ -513,66 +435,49 @@ Dossier and search ranking use repository-local heuristics:
 - docs are downweighted unless the task appears documentation-focused
 - generated, fixture, snapshot, and lockfile paths are downweighted
 - large files are downweighted unless other signals are strong
-- the dossier includes ranking confidence notes when top results look noisy
+- dossiers include ranking confidence notes when top results look noisy
 
-This is deliberately transparent. The point is not to pretend to understand code semantically; the point is to get the agent to a smaller, defensible starting set.
+The ranking is intentionally transparent. It is a smaller starting set for the
+agent, not a claim of semantic understanding.
 
 ## Security
 
-`frontload` is local-first:
+Frontload is local-first:
 
 - no runtime LLM API calls
 - no source upload
 - local JSON/JSONL state only
 - command logs stay in `.frontload/logs/`
-- common token, password, secret, and API key patterns are redacted from budgeted reads and command summaries
+- common token, password, secret, and API key patterns are redacted from
+  budgeted reads and command summaries
 
-You are still responsible for command allowlists. Do not configure destructive commands as allowed unless you really want agents to run them.
+You are still responsible for command allowlists. Do not configure destructive
+commands as allowed unless you really want agents to run them.
+
+See [docs/security.md](docs/security.md) for a shorter security summary.
+
+## Troubleshooting
+
+- MCP server missing after init: restart the editor and confirm
+  `frontload --version` works in your shell.
+- Command is not allowed: add a safe prefix to `commands.allowed`, or use
+  `--allow-unconfigured` for a trusted one-off local run.
+- Dossier is empty: run `frontload index --repo .` and use more concrete task
+  words.
+- Codex config key rejected: keep the MCP `command` and `args`, then remove the
+  rejected optional key.
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for more detail.
 
 ## Limitations
 
 - Token counts are estimates, not exact tokenizer counts.
 - Ranking is lexical and heuristic.
-- Kotlin and Markdown symbol extraction is simpler than TypeScript/JavaScript extraction.
+- Kotlin and Markdown symbol extraction is simpler than TypeScript/JavaScript
+  extraction.
 - `compare-cost` relies on git history and current `.frontload/events.jsonl`.
 - Savings are reported only when Frontload observes an exact baseline; other
   operations are labeled unmeasured.
-- Command summaries preserve common TypeScript and test failures, but parsers are intentionally conservative.
+- Command summaries preserve common TypeScript and test failures, but parsers
+  are intentionally conservative.
 - Local scout is an extension point and is disabled by default.
-
-## Development
-
-```bash
-pnpm install
-pnpm build
-pnpm test
-pnpm e2e
-pnpm proof
-```
-
-Useful files:
-
-- `src/cli/index.ts`: CLI entrypoint
-- `src/indexer/indexer.ts`: repo indexer
-- `src/dossier/dossier.ts`: ranking and dossier generation
-- `src/commands/read.ts`: budgeted file reads
-- `src/commands/run.ts`: command summaries
-- `src/diff/diff.ts`: diff and cost comparison
-- `src/mcp/server.ts`: MCP server
-- `tests/unit/`: unit coverage
-- `tests/e2e/`: proof workflow coverage
-
-## Proof
-
-The repository includes proof artifacts under `proof/`, including a token-cost trial against two real apps:
-
-- `proof/strimma-springa-token-cost-report.md`
-- `proof/raw-vs-summary.json`
-- `proof/sample-dossier.md`
-- `proof/mcp-transcript.jsonl`
-
-Regenerate proof artifacts with:
-
-```bash
-pnpm proof
-```

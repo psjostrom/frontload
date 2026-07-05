@@ -1,10 +1,18 @@
-# Architecture
+# How Frontload Works
 
-Frontload has four local components:
+Frontload is local-first. It does not upload source code or call an LLM API at
+runtime.
+
+When you run `npx frontload init`, Frontload creates project state in
+`.frontload/` and can configure supported agents to use its MCP server and
+hooks.
+
+The workflow has four local parts:
 
 - Indexer: scans supported files and writes `.frontload/index.json`.
 - Dossier generator: ranks files for a task using lexical matches, symbols, dependency edges, tests, and path clues.
 - Budgeted tools: bounded reads, summarized commands, compact diffs, and budget reports.
-- MCP server: exposes the same capabilities to Codex over stdio.
+- MCP server: exposes the same capabilities to supported agents over stdio.
 
-No runtime path sends source code to an external service.
+Command logs stay under `.frontload/logs/`. Budget and event metadata stay in
+`.frontload/events.jsonl`.

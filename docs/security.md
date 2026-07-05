@@ -1,6 +1,7 @@
 # Security
 
-Frontload is local-first. It does not call paid LLM APIs and does not make runtime network calls.
+Frontload is local-first. It does not upload source code, call paid LLM APIs, or
+make runtime network calls.
 
 Command execution is allowlisted by `frontload.config.json` unless `--allow-unconfigured` is passed. Raw command logs are written under `.frontload/logs/`. Output summaries redact obvious tokens, API keys, secrets, and passwords with simple pattern matching.
 
