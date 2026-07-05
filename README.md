@@ -85,8 +85,9 @@ frontload index --repo .
 ```
 
 The index records supported files, symbols, imports, dependency edges, sizes,
-and basic categories. It ignores common heavy paths such as `node_modules`,
-build output, coverage, lockfiles, and `.frontload`.
+and basic categories. It scans only configured literal file extensions and
+ignores common heavy paths such as `node_modules`, build output, coverage,
+lockfiles, agent worktrees, framework caches, and `.frontload`.
 
 ### 3. Generate a Task Dossier
 
@@ -253,7 +254,10 @@ Checks the local environment and Frontload state directory.
 frontload index --repo .
 ```
 
-Scans the repo and writes `.frontload/index.json`.
+Scans the repo and writes `.frontload/index.json`. The `stats.ignoredCount`
+field counts files that matched the configured index extensions but were skipped
+by index limits, such as `maxFileBytes`; it does not require a repo-wide count
+of every unsupported file type.
 
 ### `dossier`
 
@@ -417,6 +421,10 @@ Example:
   }
 }
 ```
+
+`index.extensions` values are treated as literal extensions. A leading dot is
+optional (`"json"` is normalized to `".json"`), and glob expressions are not
+expanded.
 
 ## Ranking Policy
 

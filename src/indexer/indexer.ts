@@ -82,8 +82,21 @@ type ScanResult = {
   ignoredCount: number;
 };
 
+function literalExtensions(extensions: string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const extension of extensions) {
+    const value = extension.startsWith(".") ? extension : `.${extension}`;
+    if (!/^\.[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value) || seen.has(value)) continue;
+    seen.add(value);
+    normalized.push(value);
+  }
+  return normalized;
+}
+
 async function scanIndexableFiles(repoRoot: string, config: FrontloadConfig): Promise<ScanResult> {
-  const patterns = config.index.extensions.map((extension) => `**/*${extension}`);
+  const extensions = literalExtensions(config.index.extensions);
+  const patterns = extensions.map((extension) => `**/*${extension}`);
   const entries = await fg(patterns, {
     cwd: repoRoot,
     dot: true,
@@ -96,7 +109,7 @@ async function scanIndexableFiles(repoRoot: string, config: FrontloadConfig): Pr
   for (const abs of entries) {
     const st = fs.statSync(abs);
     const ext = path.extname(abs);
-    if (!config.index.extensions.includes(ext) || st.size > config.index.maxFileBytes) {
+    if (!extensions.includes(ext) || st.size > config.index.maxFileBytes) {
       ignoredCount += 1;
       continue;
     }
