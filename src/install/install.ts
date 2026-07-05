@@ -353,9 +353,13 @@ function isEphemeralPackagePath(value: string): boolean {
   return normalized.includes("/_npx/") || normalized.includes("/dlx-") || normalized.includes("/.pnpm/dlx/") || normalized.includes("/node_modules/.bin/");
 }
 
+export function resolveGlobalExecutable(bin = "frontload", envPath = process.env.PATH ?? ""): string | undefined {
+  return findExecutablesOnPath(bin, envPath).find((executable) => !isEphemeralPackagePath(executable));
+}
+
 export function isGloballyInstalled(bin = "frontload", envPath = process.env.PATH ?? "", currentPackageRoot = packageRoot()): boolean {
   void currentPackageRoot;
-  return findExecutablesOnPath(bin, envPath).some((executable) => !isEphemeralPackagePath(executable));
+  return resolveGlobalExecutable(bin, envPath) !== undefined;
 }
 
 export function detectPackageManager(userAgent = process.env.npm_config_user_agent ?? ""): PackageManager {

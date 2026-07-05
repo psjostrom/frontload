@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,12 +15,12 @@ import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
-import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
-import { packageVersion } from "../version.js";
+import { packageVersion, packageVersionFrom } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
 import { formatInitOutput } from "./init-output.js";
 import { parsePositiveInteger } from "./options.js";
@@ -219,6 +220,214 @@ function refreshArgs(repo: string, homeDir: string): string[] {
   return ["upgrade", "--refresh-only", "--repo", repo, "--home", homeDir];
 }
 
+type InstalledFrontloadCheck = {
+  command: "frontload";
+  available: boolean;
+  path?: string;
+  packageRoot?: string;
+  version?: string;
+  repoVersion?: string;
+  matchesCurrentVersion?: boolean;
+  matchesTargetPackage?: boolean;
+  regularInstall?: boolean;
+  error?: string;
+};
+
+type CodexDogfoodCheck = {
+  configPath: string;
+  configured: boolean;
+  command?: string;
+  args?: string[];
+  enabled?: boolean;
+  repo?: string;
+  usesInstalledCommand: boolean;
+  startsMcp: boolean;
+  enabledForUse: boolean;
+  repoIsAbsolute: boolean;
+  repoMatches: boolean;
+  error?: string;
+};
+
+const dogfoodFingerprintFiles = [
+  "package.json",
+  "dist/src/cli/index.js",
+  "dist/src/install/install.js",
+  "dist/src/mcp/server.js",
+  "plugins/codex/skills/frontload/SKILL.md",
+  "plugins/codex/hooks/hooks.json",
+  "frontload.config.example.json"
+];
+
+function packageRootFromExecutable(executable: string): string | undefined {
+  let dir = path.dirname(fs.realpathSync(executable));
+  while (true) {
+    const packageFile = path.join(dir, "package.json");
+    if (fs.existsSync(packageFile)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8")) as { name?: string };
+        if (pkg.name === "frontload") return dir;
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+function dogfoodPackageFingerprint(root: string): string {
+  const hash = crypto.createHash("sha256");
+  for (const file of dogfoodFingerprintFiles) {
+    const target = path.join(root, file);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+      throw new Error(`Missing dogfood package file: ${file}`);
+    }
+    hash.update(file);
+    hash.update("\0");
+    hash.update(fs.readFileSync(target));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function installedFrontloadCheck(repoRoot: string): InstalledFrontloadCheck {
+  const executable = resolveGlobalExecutable("frontload");
+  if (!executable) {
+    return {
+      command: "frontload",
+      available: false,
+      matchesCurrentVersion: false,
+      matchesTargetPackage: false,
+      regularInstall: false,
+      error: "No non-ephemeral frontload executable was found on PATH."
+    };
+  }
+  try {
+    const repoVersion = packageVersionFrom(repoRoot);
+    const version = execFileSync(executable, ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000
+    }).trim();
+    const packageRoot = packageRootFromExecutable(executable);
+    const matchesTargetPackage = packageRoot
+      ? dogfoodPackageFingerprint(packageRoot) === dogfoodPackageFingerprint(repoRoot)
+      : false;
+    return {
+      command: "frontload",
+      available: true,
+      path: executable,
+      packageRoot,
+      version,
+      repoVersion,
+      matchesCurrentVersion: version === repoVersion,
+      matchesTargetPackage,
+      regularInstall: !!packageRoot && path.resolve(packageRoot) !== repoRoot
+    };
+  } catch (error) {
+    return {
+      command: "frontload",
+      available: false,
+      matchesCurrentVersion: false,
+      matchesTargetPackage: false,
+      regularInstall: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function doctorTomlTable(text: string, tableName: string): string | undefined {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const start = lines.findIndex((line) => line.trim() === `[${tableName}]`);
+  if (start === -1) return undefined;
+  let end = start + 1;
+  while (end < lines.length && !/^\s*\[[^\]]+\]\s*$/.test(lines[end])) end += 1;
+  return lines.slice(start, end).join("\n");
+}
+
+function doctorTomlJsonValue<T>(block: string, key: string): T | undefined {
+  const match = block.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, "m"));
+  if (!match) return undefined;
+  try {
+    return JSON.parse(match[1]) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+function doctorRepoArg(args: string[] | undefined): string | undefined {
+  if (!args) return undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--repo") return args[i + 1];
+    if (args[i]?.startsWith("--repo=")) return args[i].slice("--repo=".length);
+  }
+  return undefined;
+}
+
+function codexDogfoodCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck {
+  const configPath = mcpConfigAdapters.codex.globalPath(homeDir);
+  if (!configPath) {
+    return { configPath: "", configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+  }
+  if (!fs.existsSync(configPath)) {
+    return { configPath, configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+  }
+  try {
+    const block = doctorTomlTable(fs.readFileSync(configPath, "utf8"), "mcp_servers.frontload");
+    if (!block) return { configPath, configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+    const command = doctorTomlJsonValue<string>(block, "command");
+    const args = doctorTomlJsonValue<string[]>(block, "args");
+    const enabled = doctorTomlJsonValue<boolean>(block, "enabled");
+    const repo = doctorRepoArg(args);
+    const repoIsAbsolute = !!repo && path.isAbsolute(repo);
+    return {
+      configPath,
+      configured: true,
+      command,
+      args,
+      enabled,
+      repo,
+      usesInstalledCommand: command === "frontload",
+      startsMcp: args?.[0] === "mcp",
+      enabledForUse: enabled !== false,
+      repoIsAbsolute,
+      repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false
+    };
+  } catch (error) {
+    return {
+      configPath,
+      configured: false,
+      usesInstalledCommand: false,
+      startsMcp: false,
+      enabledForUse: false,
+      repoIsAbsolute: false,
+      repoMatches: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function dogfoodCheck(repoRoot: string, homeDir: string) {
+  const installedCommand = installedFrontloadCheck(repoRoot);
+  const codex = codexDogfoodCheck(repoRoot, homeDir);
+  return {
+    ok: installedCommand.available
+      && installedCommand.matchesCurrentVersion === true
+      && installedCommand.matchesTargetPackage === true
+      && installedCommand.regularInstall === true
+      && codex.configured
+      && codex.usesInstalledCommand
+      && codex.startsMcp
+      && codex.enabledForUse
+      && codex.repoIsAbsolute
+      && codex.repoMatches,
+    currentVersion: packageVersion,
+    installedCommand,
+    codex
+  };
+}
+
 program
   .command("init")
   .option("--repo <repo>", "repository root", ".")
@@ -272,22 +481,30 @@ program
     execFileSync("frontload", refreshArgs(repoRoot, homeDir), { stdio: "inherit" });
   });
 
-program.command("doctor").option("--repo <repo>", "repository root", ".").action(async (opts) => {
-  const repoRoot = resolveRepo(opts.repo);
-  const checks = {
-    node: process.versions.node,
-    repoRoot,
-    config: !!loadConfig(repoRoot),
-    writableState: (() => {
-      fs.mkdirSync(stateDir(repoRoot), { recursive: true });
-      fs.writeFileSync(path.join(stateDir(repoRoot), ".doctor"), "ok");
-      return true;
-    })(),
-    mcpServer: true,
-    platform: os.platform()
-  };
-  print({ summary: "doctor completed", checks });
-});
+program.command("doctor")
+  .option("--repo <repo>", "repository root", ".")
+  .option("--home <dir>", "home directory for agent configuration checks")
+  .option("--dogfood", "fail when the regular installed Codex dogfood path is not configured")
+  .action(async (opts) => {
+    const repoRoot = resolveRepo(opts.repo);
+    const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
+    const dogfood = opts.dogfood ? dogfoodCheck(repoRoot, homeDir) : undefined;
+    const checks = {
+      node: process.versions.node,
+      repoRoot,
+      config: !!loadConfig(repoRoot),
+      writableState: (() => {
+        fs.mkdirSync(stateDir(repoRoot), { recursive: true });
+        fs.writeFileSync(path.join(stateDir(repoRoot), ".doctor"), "ok");
+        return true;
+      })(),
+      mcpServer: true,
+      platform: os.platform(),
+      ...(dogfood ? { dogfood } : {})
+    };
+    print({ summary: dogfood && !dogfood.ok ? "doctor completed with dogfood warnings" : "doctor completed", checks });
+    if (opts.dogfood && dogfood && !dogfood.ok) process.exitCode = 1;
+  });
 
 program.command("index").option("--repo <repo>", "repository root", ".").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
