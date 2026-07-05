@@ -433,7 +433,10 @@ describe("e2e proof workflow", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout).summary).toContain("not upgraded globally");
+    expect(result.stdout).toContain("Frontload upgrade needs one more step");
+    expect(result.stdout).toContain("Frontload was not upgraded globally");
+    expect(result.stdout).toMatch(/\[manual\] (npm install -g|pnpm add -g|yarn global add|bun add -g) frontload@latest/);
+    expect(result.stdout).not.toContain("\"globalInstall\"");
     expect(fs.readFileSync(codexConfig, "utf8")).toContain("old-frontload");
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
   });
@@ -487,7 +490,11 @@ describe("e2e proof workflow", () => {
       "--repo",
       repo,
       "--home",
-      home
+      home,
+      "--global-install-action",
+      "updated",
+      "--global-install-command",
+      "npm install -g frontload@latest"
     ]);
   });
 
@@ -509,7 +516,11 @@ describe("e2e proof workflow", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).summary).toContain("refreshed existing agent configuration");
+    expect(result.stdout).toContain("Frontload upgrade complete");
+    expect(result.stdout).toContain("Frontload and existing agent configuration were updated.");
+    expect(result.stdout).toContain("| Codex setup |");
+    expect(result.stdout).not.toContain("\"agents\"");
+    expect(result.stdout).not.toContain("\"repoRoot\"");
     expect(fs.readFileSync(codexConfig, "utf8")).toContain('command = "frontload"');
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
   });
@@ -683,6 +694,57 @@ describe("e2e proof workflow", () => {
 
     expect(data.summary).toBe("doctor completed");
     expect(data.checks.dogfood).toBeUndefined();
+  });
+
+  it("formats upgrade refresh-only output instead of emitting raw JSON", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-upgrade-cli-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-upgrade-cli-home-"));
+    const codexConfig = path.join(home, ".codex/config.toml");
+    const codexHooks = path.join(home, ".codex/hooks.json");
+    const skillFile = path.join(home, ".codex/skills/frontload/SKILL.md");
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, [
+      "[mcp_servers.frontload]",
+      "command = \"old-frontload\"",
+      `args = ["mcp", "--repo", "${repo}"]`,
+      ""
+    ].join("\n"));
+    fs.writeFileSync(codexHooks, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "frontload", args: ["hook", "pre-tool-use"], timeout: 3 }]
+          }
+        ]
+      }
+    }, null, 2));
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+
+    const result = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "upgrade",
+      "--refresh-only",
+      "--repo",
+      repo,
+      "--home",
+      home,
+      "--global-install-action",
+      "updated",
+      "--global-install-command",
+      "npm install -g frontload@latest"
+    ]);
+
+    expect(result.stdout).toContain("Frontload upgrade complete");
+    expect(result.stdout).toContain("| Global command |");
+    expect(result.stdout).toContain("[updated] npm install -g frontload@latest");
+    expect(result.stdout).toContain("| Codex setup |");
+    expect(result.stdout).toContain("[updated] ~/.codex/config.toml");
+    expect(result.stdout).toContain("Restart Codex after upgrade completes");
+    expect(result.stdout).not.toContain("\"agents\"");
+    expect(result.stdout).not.toContain("\"repoRoot\"");
+    expect(result.stdout).not.toContain("\"writes\"");
   });
 
   it("rejects invalid dogfood configurations", async () => {

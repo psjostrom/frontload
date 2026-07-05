@@ -22,7 +22,7 @@ import { BaselineKind } from "../types.js";
 import { resolveRepo, stateDir } from "../utils/path.js";
 import { packageVersion, packageVersionFrom } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
-import { formatInitOutput } from "./init-output.js";
+import { formatInitOutput, formatUpgradeOutput } from "./init-output.js";
 import { parsePositiveInteger } from "./options.js";
 
 type ResultMeasurement<T> = {
@@ -216,8 +216,36 @@ async function ensureGlobalFrontloadUpgrade(approved: boolean): Promise<GlobalIn
   return upgradeGlobalFrontload(packageManager);
 }
 
-function refreshArgs(repo: string, homeDir: string): string[] {
-  return ["upgrade", "--refresh-only", "--repo", repo, "--home", homeDir];
+function parseGlobalInstallAction(value: string | undefined): GlobalInstallResult["action"] | undefined {
+  if (!value) return undefined;
+  if (value === "installed" || value === "updated" || value === "skipped" || value === "manual") return value;
+  throw new Error(`Unknown global install action: ${value}`);
+}
+
+function globalInstallFromOptions(action: string | undefined, command: string | undefined): GlobalInstallResult | undefined {
+  const parsedAction = parseGlobalInstallAction(action);
+  if (!parsedAction || !command) return undefined;
+  return {
+    action: parsedAction,
+    command,
+    args: [],
+    notes: []
+  };
+}
+
+function refreshArgs(repo: string, homeDir: string, globalInstall: GlobalInstallResult): string[] {
+  return [
+    "upgrade",
+    "--refresh-only",
+    "--repo",
+    repo,
+    "--home",
+    homeDir,
+    "--global-install-action",
+    globalInstall.action,
+    "--global-install-command",
+    formatCommand(globalInstall)
+  ];
 }
 
 type InstalledFrontloadCheck = {
@@ -458,27 +486,34 @@ program
   .option("--home <dir>", "home directory for agent plugin installation")
   .option("--yes", "approve upgrading frontload globally")
   .addOption(new Option("--refresh-only").hideHelp())
+  .addOption(new Option("--global-install-action <action>").hideHelp())
+  .addOption(new Option("--global-install-command <command>").hideHelp())
   .action(async (opts) => {
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     const repoRoot = resolveRepo(opts.repo);
     if (opts.refreshOnly) {
       const upgrade = upgradeAll(repoRoot, homeDir);
-      print({
+      process.stdout.write(formatUpgradeOutput({
         summary: upgrade.agents.length > 0
-          ? "Frontload upgrade refreshed existing agent configuration."
+          ? "Frontload and existing agent configuration were updated."
           : "Frontload upgrade found no existing agent configuration to refresh.",
+        globalInstall: globalInstallFromOptions(opts.globalInstallAction, opts.globalInstallCommand),
+        homeDir,
         ...upgrade
-      });
+      }));
       return;
     }
 
     const globalInstall = await ensureGlobalFrontloadUpgrade(!!opts.yes);
     if (globalInstall.action === "manual") {
-      print({ summary: "Frontload was not upgraded globally; agent configuration was not refreshed.", globalInstall });
+      process.stdout.write(formatUpgradeOutput({
+        summary: "Frontload was not upgraded globally; agent configuration was not refreshed.",
+        globalInstall
+      }));
       process.exitCode = 1;
       return;
     }
-    execFileSync("frontload", refreshArgs(repoRoot, homeDir), { stdio: "inherit" });
+    execFileSync("frontload", refreshArgs(repoRoot, homeDir, globalInstall), { stdio: "inherit" });
   });
 
 program.command("doctor")

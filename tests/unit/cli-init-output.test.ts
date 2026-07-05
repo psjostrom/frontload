@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { formatInitOutput } from "../../src/cli/init-output.js";
+import { formatInitOutput, formatUpgradeOutput } from "../../src/cli/init-output.js";
 
 describe("init output formatting", () => {
   it("renders a human-friendly setup summary", () => {
@@ -80,5 +80,101 @@ describe("init output formatting", () => {
 
     expect(output).toContain("Restart Codex and Claude Code.");
     expect(output).toContain("Run /mcp in each editor");
+  });
+});
+
+describe("upgrade output formatting", () => {
+  it("renders a successful Codex upgrade without project files or JSON keys", () => {
+    const home = os.homedir();
+    const repo = path.join(home, "code/springa");
+    const output = formatUpgradeOutput({
+      summary: "Frontload and existing agent configuration were updated.",
+      globalInstall: {
+        action: "updated",
+        command: "npm",
+        args: ["install", "-g", "frontload@latest"],
+        notes: ["Updated frontload globally."]
+      },
+      repoRoot: repo,
+      project: [],
+      agents: [
+        {
+          agent: "codex",
+          writes: [
+            { path: path.join(home, ".codex/config.toml"), action: "updated" },
+            { path: path.join(home, ".codex/hooks.json"), action: "updated" },
+            { path: path.join(home, ".codex/skills/frontload"), action: "updated" }
+          ],
+          notes: [
+            "Restart Codex after upgrade completes; /mcp should show the frontload server.",
+            "Open /hooks once to review and approve the Frontload command hooks."
+          ]
+        }
+      ]
+    });
+
+    expect(output).toContain("Frontload upgrade complete");
+    expect(output).toContain("Frontload and existing agent configuration were updated.");
+    expect(output).toContain("| Global command |");
+    expect(output).toContain("[updated] npm install -g frontload@latest");
+    expect(output).toContain("| Codex setup |");
+    expect(output).toContain("[updated] ~/.codex/config.toml");
+    expect(output).toContain("Restart Codex after upgrade completes");
+    expect(output).toContain("| Next steps |");
+    expect(output).toContain("1. Restart Codex.");
+    expect(output).not.toContain("| Project files |");
+    expect(output).not.toContain(`Repo: ${repo}`);
+    expect(output).not.toContain("\"agents\"");
+    expect(output).not.toContain("\"repoRoot\"");
+    expect(output).not.toContain("\"writes\"");
+  });
+
+  it("renders next steps for both Codex and Claude upgrades", () => {
+    const output = formatUpgradeOutput({
+      agents: [
+        { agent: "codex", writes: [], notes: [] },
+        { agent: "claude", writes: [], notes: [] }
+      ]
+    });
+
+    expect(output).toContain("| Codex setup |");
+    expect(output).toContain("| Claude setup |");
+    expect(output).toContain("Restart Codex and Claude Code.");
+    expect(output).toContain("Run /mcp in each editor");
+  });
+
+  it("renders a friendly message when no existing agent configuration is found", () => {
+    const output = formatUpgradeOutput({
+      globalInstall: {
+        action: "updated",
+        command: "npm",
+        args: ["install", "-g", "frontload@latest"],
+        notes: []
+      },
+      agents: []
+    });
+
+    expect(output).toContain("| Agent setup |");
+    expect(output).toContain("No existing agent configuration was found to refresh.");
+    expect(output).not.toContain("| Project files |");
+    expect(output).not.toContain("\"agents\"");
+  });
+
+  it("renders the declined global upgrade as a manual command", () => {
+    const output = formatUpgradeOutput({
+      summary: "Frontload was not upgraded globally; agent configuration was not refreshed.",
+      globalInstall: {
+        action: "manual",
+        command: "pnpm",
+        args: ["add", "-g", "frontload@latest"],
+        notes: ["Upgrade frontload manually before restarting your editor: pnpm add -g frontload@latest"]
+      }
+    });
+
+    expect(output).toContain("Frontload upgrade needs one more step");
+    expect(output).toContain("[manual] pnpm add -g frontload@latest");
+    expect(output).toContain("Upgrade frontload manually");
+    expect(output).toContain("Run pnpm add -g frontload@latest.");
+    expect(output).not.toContain("\"globalInstall\"");
   });
 });
