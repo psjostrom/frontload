@@ -30,14 +30,14 @@ describe("installer", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-"));
     const result = initAll(repo, ["codex"], home);
-    const codexConfigFile = path.join(home, ".codex/config.toml");
+    const codexConfigFile = path.join(repo, ".codex/config.toml");
     const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
 
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
-    expect(result.agents[0].writes.map((write) => path.relative(home, write.path))).toEqual([
+    expect(result.agents[0].writes.map((write) => path.relative(repo, write.path))).toEqual([
       ".codex/config.toml",
-      ".codex/hooks.json",
-      ".codex/skills/frontload"
+      path.relative(repo, path.join(home, ".codex/hooks.json")),
+      path.relative(repo, path.join(home, ".codex/skills/frontload"))
     ]);
     expect(codexConfig).toContain("[mcp_servers.frontload]");
     expect(codexConfig).toContain('command = "frontload"');
@@ -77,6 +77,24 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(home, "plugins/frontload/.codex-plugin/plugin.json"))).toBe(false);
   });
 
+  it("configures two Codex repos without overwriting either MCP repo", () => {
+    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-a-"));
+    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-b-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-multi-"));
+
+    initAll(repoA, ["codex"], home);
+    initAll(repoB, ["codex"], home);
+
+    const configA = fs.readFileSync(path.join(repoA, ".codex/config.toml"), "utf8");
+    const configB = fs.readFileSync(path.join(repoB, ".codex/config.toml"), "utf8");
+    const hooks = JSON.parse(fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8"));
+
+    expect(configA).toContain(`args = ["mcp", "--repo", "${repoA}"]`);
+    expect(configB).toContain(`args = ["mcp", "--repo", "${repoB}"]`);
+    expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
+    expect(hooks.hooks.PreToolUse[0].hooks[0].command).toBe("frontload hook pre-tool-use --host codex");
+  });
+
   it("configures all supported agent adapters from init", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-all-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-all-"));
@@ -84,7 +102,8 @@ describe("installer", () => {
     const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
 
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex", "claude"]);
-    expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
@@ -211,7 +230,7 @@ describe("installer", () => {
   it("replaces stale Codex frontload tables without touching other servers", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-merge-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-merge-"));
-    const configFile = path.join(home, ".codex/config.toml");
+    const configFile = path.join(repo, ".codex/config.toml");
     fs.mkdirSync(path.dirname(configFile), { recursive: true });
     fs.writeFileSync(configFile, [
       "[mcp_servers.other]",
@@ -291,6 +310,7 @@ describe("installer", () => {
     expect(parseConfigScope("global")).toBe("global");
     expect(() => parseConfigScope("workspace")).toThrow("Unknown config scope");
     expect(detectPackageManager("pnpm/10.14.0 npm/? node/?")).toBe("pnpm");
+    expect(globalInstallCommand()).toEqual({ packageManager: "npm", command: "npm", args: ["install", "-g", "frontload"] });
     expect(globalInstallCommand("bun")).toEqual({ packageManager: "bun", command: "bun", args: ["add", "-g", "frontload"] });
   });
 

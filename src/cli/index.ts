@@ -6,16 +6,18 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { emitKeypressEvents } from "node:readline";
 import readline from "node:readline/promises";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Command, Option } from "commander";
 import { appendEvent, budgetReport, outputSize } from "../budget/events.js";
 import { loadConfig } from "../config/config.js";
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
-import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
+import { compactRankedResults, generateDossier, searchIndexMeasured, type CompactRanked } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
-import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
@@ -73,6 +75,23 @@ async function measured<T>(
 
 function print(data: unknown): void {
   process.stdout.write(serializeOutput(data));
+}
+
+function fitCliSearchData(maxOutputChars: number, compactResults: CompactRanked[]): unknown {
+  if (!compactResults.length) return { summary: "Search results from index.", results: [] };
+  let visible = compactResults;
+  let omittedResults = 0;
+  while (visible.length > 0) {
+    const data = {
+      summary: "Search results from index.",
+      results: visible,
+      ...(omittedResults ? { truncated: true, omittedResults } : {})
+    };
+    if (outputSize(data).chars <= maxOutputChars) return data;
+    omittedResults += 1;
+    visible = visible.slice(0, -1);
+  }
+  return { summary: "Search results from index.", results: [], truncated: true, omittedResults: compactResults.length };
 }
 
 function proofDisplayPath(repoRoot: string, filePath: string): string {
@@ -179,8 +198,7 @@ function configuresAgent(agents: Array<"codex" | "claude" | "all">, agent: "code
 }
 
 async function ensureGlobalFrontload(approved: boolean): Promise<GlobalInstallResult> {
-  const packageManager = detectPackageManager();
-  const install = globalInstallCommand(packageManager);
+  const install = globalInstallCommand();
   if (isGloballyInstalled()) {
     return {
       action: "skipped",
@@ -198,12 +216,11 @@ async function ensureGlobalFrontload(approved: boolean): Promise<GlobalInstallRe
       notes: [`Install frontload globally before restarting your editor: ${formatCommand(install)}`]
     };
   }
-  return installGlobalFrontload(packageManager);
+  return installGlobalFrontload();
 }
 
 async function ensureGlobalFrontloadUpgrade(approved: boolean): Promise<GlobalInstallResult> {
-  const packageManager = detectPackageManager();
-  const install = globalInstallCommand(packageManager, "frontload@latest");
+  const install = globalInstallCommand("npm", "frontload@latest");
   const canUpgrade = approved || await promptApproveGlobalUpgrade(formatCommand(install));
   if (!canUpgrade) {
     return {
@@ -213,7 +230,7 @@ async function ensureGlobalFrontloadUpgrade(approved: boolean): Promise<GlobalIn
       notes: [`Upgrade frontload manually before restarting your editor: ${formatCommand(install)}`]
     };
   }
-  return upgradeGlobalFrontload(packageManager);
+  return upgradeGlobalFrontload();
 }
 
 function parseGlobalInstallAction(value: string | undefined): GlobalInstallResult["action"] | undefined {
@@ -263,6 +280,7 @@ type InstalledFrontloadCheck = {
 
 type CodexDogfoodCheck = {
   configPath: string;
+  configScope: "project" | "global" | "none";
   configured: boolean;
   command?: string;
   args?: string[];
@@ -273,6 +291,11 @@ type CodexDogfoodCheck = {
   enabledForUse: boolean;
   repoIsAbsolute: boolean;
   repoMatches: boolean;
+  launches: boolean;
+  responds: boolean;
+  legacyGlobalConflict: boolean;
+  restartAdvice?: string;
+  probeError?: string;
   error?: string;
 };
 
@@ -393,17 +416,29 @@ function doctorRepoArg(args: string[] | undefined): string | undefined {
   return undefined;
 }
 
-function codexDogfoodCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck {
-  const configPath = mcpConfigAdapters.codex.globalPath(homeDir);
-  if (!configPath) {
-    return { configPath: "", configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
-  }
+function emptyCodexCheck(configPath: string, configScope: CodexDogfoodCheck["configScope"], legacyGlobalConflict = false): CodexDogfoodCheck {
+  return {
+    configPath,
+    configScope,
+    configured: false,
+    usesInstalledCommand: false,
+    startsMcp: false,
+    enabledForUse: false,
+    repoIsAbsolute: false,
+    repoMatches: false,
+    launches: false,
+    responds: false,
+    legacyGlobalConflict
+  };
+}
+
+function readCodexConfigCheck(configPath: string, configScope: CodexDogfoodCheck["configScope"], repoRoot: string, legacyGlobalConflict = false): CodexDogfoodCheck {
   if (!fs.existsSync(configPath)) {
-    return { configPath, configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+    return emptyCodexCheck(configPath, configScope, legacyGlobalConflict);
   }
   try {
     const block = doctorTomlTable(fs.readFileSync(configPath, "utf8"), "mcp_servers.frontload");
-    if (!block) return { configPath, configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+    if (!block) return emptyCodexCheck(configPath, configScope, legacyGlobalConflict);
     const command = doctorTomlJsonValue<string>(block, "command");
     const args = doctorTomlJsonValue<string[]>(block, "args");
     const enabled = doctorTomlJsonValue<boolean>(block, "enabled");
@@ -411,34 +446,94 @@ function codexDogfoodCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck
     const repoIsAbsolute = !!repo && path.isAbsolute(repo);
     return {
       configPath,
+      configScope,
       configured: true,
       command,
       args,
       enabled,
       repo,
       usesInstalledCommand: command === "frontload",
-      startsMcp: args?.[0] === "mcp",
+      startsMcp: args?.includes("mcp") === true,
       enabledForUse: enabled !== false,
       repoIsAbsolute,
-      repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false
+      repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false,
+      launches: false,
+      responds: false,
+      legacyGlobalConflict
     };
   } catch (error) {
     return {
       configPath,
+      configScope,
       configured: false,
       usesInstalledCommand: false,
       startsMcp: false,
       enabledForUse: false,
       repoIsAbsolute: false,
       repoMatches: false,
+      launches: false,
+      responds: false,
+      legacyGlobalConflict,
       error: error instanceof Error ? error.message : String(error)
     };
   }
 }
 
-function dogfoodCheck(repoRoot: string, homeDir: string) {
+async function probeCodexMcp(check: CodexDogfoodCheck): Promise<CodexDogfoodCheck> {
+  if (!check.configured || !check.command || !check.args || !check.startsMcp || !check.enabledForUse) return check;
+  const transport = new StdioClientTransport({
+    command: check.command,
+    args: check.args,
+    stderr: "pipe"
+  });
+  const client = new Client({ name: "frontload-doctor", version: packageVersion });
+  let launches = false;
+  try {
+    await client.connect(transport, { timeout: 5000, maxTotalTimeout: 5000 });
+    launches = true;
+    const response = await client.callTool({ name: "fl_policy", arguments: {} }, undefined, { timeout: 5000, maxTotalTimeout: 5000 });
+    const content = response.content as Array<{ type: string; text?: string }>;
+    const text = content.find((part) => part.type === "text")?.text;
+    const data = text ? JSON.parse(text) as { summary?: string } : {};
+    return {
+      ...check,
+      launches: true,
+      responds: data.summary === "Current Frontload policy.",
+      restartAdvice: "If Codex tools still fail with Transport closed after this probe passes, restart Codex so it reloads the MCP process."
+    };
+  } catch (error) {
+    return {
+      ...check,
+      launches,
+      responds: false,
+      probeError: error instanceof Error ? error.message : String(error)
+    };
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<CodexDogfoodCheck> {
+  const projectPath = mcpConfigAdapters.codex.projectPath(repoRoot);
+  const globalPath = mcpConfigAdapters.codex.globalPath(homeDir);
+  const globalCheck = globalPath
+    ? readCodexConfigCheck(globalPath, "global", repoRoot)
+    : emptyCodexCheck("", "none");
+  const legacyGlobalConflict = globalCheck.configured && !globalCheck.repoMatches;
+  const projectCheck = projectPath
+    ? readCodexConfigCheck(projectPath, "project", repoRoot, legacyGlobalConflict)
+    : emptyCodexCheck("", "none", legacyGlobalConflict);
+  const active = projectCheck.configured
+    ? projectCheck
+    : globalCheck.configured
+      ? { ...globalCheck, legacyGlobalConflict }
+      : emptyCodexCheck(projectPath ?? globalPath ?? "", "none", legacyGlobalConflict);
+  return probeCodexMcp(active);
+}
+
+async function dogfoodCheck(repoRoot: string, homeDir: string) {
   const installedCommand = installedFrontloadCheck(repoRoot);
-  const codex = codexDogfoodCheck(repoRoot, homeDir);
+  const codex = await codexDogfoodCheck(repoRoot, homeDir);
   return {
     ok: installedCommand.available
       && installedCommand.matchesCurrentVersion === true
@@ -449,7 +544,8 @@ function dogfoodCheck(repoRoot: string, homeDir: string) {
       && codex.startsMcp
       && codex.enabledForUse
       && codex.repoIsAbsolute
-      && codex.repoMatches,
+      && codex.repoMatches
+      && codex.responds,
     currentVersion: packageVersion,
     installedCommand,
     codex
@@ -523,7 +619,8 @@ program.command("doctor")
   .action(async (opts) => {
     const repoRoot = resolveRepo(opts.repo);
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
-    const dogfood = opts.dogfood ? dogfoodCheck(repoRoot, homeDir) : undefined;
+    const codex = await codexDogfoodCheck(repoRoot, homeDir);
+    const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir) : undefined;
     const checks = {
       node: process.versions.node,
       repoRoot,
@@ -534,6 +631,7 @@ program.command("doctor")
         return true;
       })(),
       mcpServer: true,
+      codex,
       platform: os.platform(),
       ...(dogfood ? { dogfood } : {})
     };
@@ -570,13 +668,14 @@ program.command("dossier").argument("<task>").option("--repo <repo>", "repositor
 
 program.command("search").argument("<query>").option("--repo <repo>", "repository root", ".").option("--limit <n>", "10").action(async (query, opts) => {
   const repoRoot = resolveRepo(opts.repo);
+  const config = loadConfig(repoRoot);
   const measuredResult = await measured(
     repoRoot,
     "search",
     { query, opts },
     () => searchIndexMeasured(repoRoot, query, Number(opts.limit)),
     {
-      output: (result) => result.results,
+      output: (result) => fitCliSearchData(config.budgets.maxToolOutputChars, compactRankedResults(result.results)),
       baseline: (result) => ({ bytes: outputSize(serializeOutput(result.unboundedResults)).bytes, kind: "unbounded-search-results" })
     }
   );
@@ -592,11 +691,13 @@ program.command("read")
   .option("--line-count <count>", "maximum number of lines to return", parsePositiveInteger)
   .action(async (file, opts) => {
     const repoRoot = resolveRepo(opts.repo);
+    const config = loadConfig(repoRoot);
     const readOptions = {
       budgetChars: opts.budget as number,
       query: opts.query as string | undefined,
       startLine: opts.startLine as number | undefined,
-      lineCount: opts.lineCount as number | undefined
+      lineCount: opts.lineCount as number | undefined,
+      maxSerializedChars: config.budgets.maxToolOutputChars
     };
     const measuredResult = await measured(
       repoRoot,

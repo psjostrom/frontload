@@ -301,7 +301,7 @@ export const mcpConfigAdapters: Record<AgentName, McpConfigAdapter> = {
   codex: {
     name: "Codex",
     detect: (homeDir) => fs.existsSync(path.join(homeDir, ".codex")),
-    projectPath: () => null,
+    projectPath: (repoRoot) => path.join(repoRoot, ".codex/config.toml"),
     globalPath: (homeDir) => path.join(homeDir, ".codex/config.toml"),
     write: upsertCodexMcpServer,
     remove: removeCodexMcpServer,
@@ -368,7 +368,7 @@ export function detectPackageManager(userAgent = process.env.npm_config_user_age
   return "npm";
 }
 
-export function globalInstallCommand(packageManager = detectPackageManager(), pkg = "frontload"): GlobalInstallCommand {
+export function globalInstallCommand(packageManager: PackageManager = "npm", pkg = "frontload"): GlobalInstallCommand {
   switch (packageManager) {
     case "pnpm":
       return { packageManager, command: "pnpm", args: ["add", "-g", pkg] };
@@ -386,7 +386,7 @@ export function formatCommand(command: Pick<GlobalInstallCommand, "command" | "a
   return [command.command, ...command.args].join(" ");
 }
 
-export function installGlobalFrontload(packageManager = detectPackageManager(), runner: InstallRunner = execFileSync): GlobalInstallResult {
+export function installGlobalFrontload(packageManager: PackageManager = "npm", runner: InstallRunner = execFileSync): GlobalInstallResult {
   const install = globalInstallCommand(packageManager);
   if (isGloballyInstalled()) {
     return {
@@ -426,7 +426,7 @@ export function installGlobalFrontload(packageManager = detectPackageManager(), 
   }
 }
 
-export function upgradeGlobalFrontload(packageManager = detectPackageManager(), runner: InstallRunner = execFileSync): GlobalInstallResult {
+export function upgradeGlobalFrontload(packageManager: PackageManager = "npm", runner: InstallRunner = execFileSync): GlobalInstallResult {
   const wasInstalled = isGloballyInstalled();
   const install = globalInstallCommand(packageManager, "frontload@latest");
   try {
@@ -470,7 +470,7 @@ export function initProject(repoRoot: string, force = false): WriteResult[] {
 }
 
 function configureCodex(repoRoot: string, homeDir = os.homedir(), force = false): InstallResult {
-  const configPath = mcpConfigAdapters.codex.globalPath(homeDir);
+  const configPath = mcpConfigAdapters.codex.projectPath(repoRoot);
   if (!configPath) throw new Error("Codex does not support project-local MCP config from init.");
   return configureCodexAt(configPath, homeDir, buildMcpEntry(repoRoot), hookDefinitions.codex, force);
 }
@@ -487,7 +487,8 @@ function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, 
     agent: "codex",
     writes,
     notes: [
-      "Restart Codex after init completes; /mcp should show the frontload server.",
+      "Codex MCP config was written to project .codex/config.toml; hooks and the Frontload skill were written to your global Codex config.",
+      "Restart Codex after init completes; /mcp should show the frontload server for this repo.",
       "Open /hooks once to review and approve the Frontload command hooks."
     ]
   };
@@ -621,12 +622,22 @@ function upgradeNotes(agent: InstallResult): InstallResult {
 export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult {
   const absRepo = path.resolve(repoRoot);
   const agents: InstallResult[] = [];
-  const codexConfig = mcpConfigAdapters.codex.globalPath(homeDir);
-  if (hasConfiguredFrontload(mcpConfigAdapters.codex, codexConfig)) {
+  const codexProjectConfig = mcpConfigAdapters.codex.projectPath(absRepo);
+  if (hasConfiguredFrontload(mcpConfigAdapters.codex, codexProjectConfig)) {
     agents.push(upgradeNotes(configureCodexAt(
-      codexConfig,
+      codexProjectConfig,
       homeDir,
-      upgradeMcpEntry("codex", codexConfig, absRepo),
+      upgradeMcpEntry("codex", codexProjectConfig, absRepo),
+      upgradeHookDefinitions("codex", path.join(homeDir, ".codex/hooks.json")),
+      true
+    )));
+  }
+  const codexGlobalConfig = mcpConfigAdapters.codex.globalPath(homeDir);
+  if (hasConfiguredFrontload(mcpConfigAdapters.codex, codexGlobalConfig)) {
+    agents.push(upgradeNotes(configureCodexAt(
+      codexGlobalConfig,
+      homeDir,
+      upgradeMcpEntry("codex", codexGlobalConfig, absRepo),
       upgradeHookDefinitions("codex", path.join(homeDir, ".codex/hooks.json")),
       true
     )));

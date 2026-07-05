@@ -20,6 +20,8 @@ export type BudgetEvent = {
   baselineBytes?: number;
   baselineKind?: BaselineKind;
   netSavedBytes?: number;
+  rssBytes?: number;
+  heapUsedBytes?: number;
 };
 
 export type IndexedFile = {

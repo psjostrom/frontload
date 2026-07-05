@@ -187,6 +187,8 @@ async function measuredMcp<TInput>(
     return response;
   } finally {
     try {
+      const durationMs = Date.now() - start;
+      const memory = durationMs >= 500 ? process.memoryUsage() : undefined;
       appendEvent(repoRoot, {
         source: "mcp",
         operation,
@@ -194,7 +196,8 @@ async function measuredMcp<TInput>(
         outputChars,
         outputBytes,
         ...(baseline ? { baselineBytes: baseline.bytes, baselineKind: baseline.kind } : {}),
-        durationMs: Date.now() - start,
+        durationMs,
+        ...(memory ? { rssBytes: memory.rss, heapUsedBytes: memory.heapUsed } : {}),
         success
       });
     } catch {
@@ -339,5 +342,23 @@ export async function startMcp(repoRoot: string): Promise<void> {
   server.tool("fl_git_diff_summary", "Summarize git diff. Use instead of dumping full diffs; not for applying patches.", { staged: z.boolean().default(false) }, handlers.diff);
   server.tool("fl_budget_report", "Return budget event totals. Use before/after large work; not a profiler.", {}, handlers.budget);
   server.tool("fl_local_scout", "Optional local model extension point. Use only when configured; do not expect network LLMs.", { prompt: z.string() }, handlers.localScout);
-  await server.connect(new StdioServerTransport());
+  const transport = new StdioServerTransport();
+  let closing = false;
+  const close = async (exitCode?: number): Promise<void> => {
+    if (closing) return;
+    closing = true;
+    await server.close().catch(() => undefined);
+    await transport.close().catch(() => undefined);
+    if (exitCode !== undefined) process.exit(exitCode);
+  };
+  process.stdin.on("close", () => {
+    void close();
+  });
+  process.once("SIGTERM", () => {
+    void close(0);
+  });
+  process.once("SIGINT", () => {
+    void close(0);
+  });
+  await server.connect(transport);
 }

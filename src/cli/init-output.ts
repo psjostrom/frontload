@@ -177,7 +177,7 @@ export function formatUpgradeOutput(result: UpgradeOutput): string {
 
   if (result.agents && result.agents.length > 0) {
     for (const agent of result.agents) {
-      lines.push(...box(agentTitle(agent), agentLines(agent, result.repoRoot)), "");
+      lines.push(...box(agentTitle(agent), agentLines(agent, result.repoRoot, result.homeDir)), "");
     }
   } else {
     lines.push(...box("Agent setup", ["  No existing agent configuration was found to refresh."]), "");

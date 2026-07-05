@@ -28,6 +28,19 @@ function writeShellScript(file: string, content: string): void {
   fs.chmodSync(file, 0o755);
 }
 
+async function waitForProcessExit(pid: number, timeoutMs = 2000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+}
+
 const dogfoodFingerprintFiles = [
   "package.json",
   "dist/src/cli/index.js",
@@ -55,7 +68,7 @@ function writeInstalledFrontloadPackage(binParent: string, version: string, sour
   const packageRoot = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-installed-package-"));
   writeDogfoodPackageFiles(packageRoot, version, sourceRoot);
   const executable = path.join(packageRoot, "bin/frontload");
-  writeShellScript(executable, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi\nexit 0\n`);
+  writeShellScript(executable, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(sourceRoot, "dist/src/cli/index.js"))} "$@"\n`);
   fs.mkdirSync(binParent, { recursive: true });
   fs.symlinkSync(executable, path.join(binParent, "frontload"));
   return packageRoot;
@@ -127,6 +140,30 @@ describe("e2e proof workflow", () => {
     expect(JSON.parse(response.content[0].text)).toMatchObject({
       summary: "Current Frontload policy."
     });
+  });
+
+  it("exits the stdio MCP process after the client closes", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-exit-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}");
+    const cli = path.resolve("dist/src/cli/index.js");
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [cli, "mcp", "--repo", repo],
+      stderr: "pipe"
+    });
+    const client = new Client({ name: "frontload-e2e", version: "1.0.0" });
+
+    await client.connect(transport);
+    const response = await client.callTool({ name: "fl_policy", arguments: {} });
+    const pid = transport.pid;
+    await client.close();
+    const content = response.content as Array<{ type: "text"; text: string }>;
+
+    expect(JSON.parse(content[0].text)).toMatchObject({
+      summary: "Current Frontload policy."
+    });
+    expect(pid).toEqual(expect.any(Number));
+    expect(await waitForProcessExit(pid!, 2000)).toBe(true);
   });
 
   it("withholds oversized MCP responses before returning them", async () => {
@@ -367,6 +404,97 @@ describe("e2e proof workflow", () => {
 
     expect(configured.stdout).toContain("Requested budget: 1234 chars");
     expect(explicit.stdout).toContain("Requested budget: 4321 chars");
+  });
+
+  it("keeps CLI search output under the configured tool output cap", async () => {
+    const repo = writeNoisySearchRepo();
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 1600
+      }
+    }));
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    await execa(process.execPath, [cli, "index", "--repo", repo]);
+    const result = await execa(process.execPath, [cli, "search", "target reconnect signal", "--repo", repo, "--limit", "12"]);
+    const data = JSON.parse(result.stdout);
+
+    expect(result.stdout.length).toBeLessThanOrEqual(1600);
+    expect(data).toMatchObject({ summary: "Search results from index." });
+    expect(data.truncated).toBe(true);
+  });
+
+  it("keeps CLI read output under the configured tool output cap", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-read-cap-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 1600
+      }
+    }));
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    const lines = Array.from({ length: 90 }, (_, i) => {
+      const marker = i === 45 ? " targetNeedle" : "";
+      return `export const paddedLine${String(i + 1).padStart(3, "0")} = "${"x".repeat(130)}";${marker}`;
+    });
+    fs.writeFileSync(path.join(repo, "src/large.ts"), `${lines.join("\n")}\n`);
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    const result = await execa(process.execPath, [cli, "read", "src/large.ts", "--repo", repo, "--budget", "3500", "--query", "targetNeedle"]);
+    const data = JSON.parse(result.stdout);
+
+    expect(result.stdout.length).toBeLessThanOrEqual(1600);
+    expect(data.excerpt).toContain("targetNeedle");
+  });
+
+  it("reports project Codex MCP health and legacy global conflicts in doctor", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-codex-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-home-"));
+    const cli = path.resolve("dist/src/cli/index.js");
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}");
+    fs.mkdirSync(path.join(repo, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".codex/config.toml"), [
+      "[mcp_servers.frontload]",
+      `command = ${JSON.stringify(process.execPath)}`,
+      `args = ${JSON.stringify([cli, "mcp", "--repo", repo])}`,
+      "enabled = true",
+      ""
+    ].join("\n"));
+    fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".codex/config.toml"), [
+      "[mcp_servers.frontload]",
+      "command = \"frontload\"",
+      `args = ${JSON.stringify(["mcp", "--repo", path.join(repo, "..", "other-repo")])}`,
+      ""
+    ].join("\n"));
+
+    const result = await execa(process.execPath, [cli, "doctor", "--repo", repo, "--home", home]);
+    const data = JSON.parse(result.stdout);
+
+    expect(data.checks.codex).toMatchObject({
+      configured: true,
+      configScope: "project",
+      repoMatches: true,
+      launches: true,
+      responds: true,
+      legacyGlobalConflict: true
+    });
+    expect(data.checks.codex.restartAdvice).toContain("Transport closed");
+  });
+
+  it("creates project-local Codex MCP config from the built init command", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-codex-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-bin-"));
+    writeShellScript(path.join(bin, "frontload"), "#!/bin/sh\nexit 0\n");
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    await execa(process.execPath, [cli, "init", "--repo", repo, "--agents", "codex", "--home", home], {
+      env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` }
+    });
+
+    expect(fs.readFileSync(path.join(repo, ".codex/config.toml"), "utf8")).toContain(`args = ["mcp", "--repo", "${repo}"]`);
+    expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
   });
 
   it("keeps the original MCP error when event persistence also fails", async () => {

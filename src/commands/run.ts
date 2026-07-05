@@ -103,6 +103,7 @@ function parseGenericFindings(output: string, findings: Finding[]): void {
 }
 
 function parseFindings(output: string, exitCode: number | null): Finding[] {
+  if (exitCode === 0) return [];
   const findings: Finding[] = [];
   parseTypeScriptFindings(output, findings);
   parseVitestFindings(output, findings);
@@ -208,6 +209,9 @@ export async function runSummary(repoRoot: string, kind: CommandSummary["kind"],
   fs.writeFileSync(fullLogPath, raw);
   const redacted = redactSecrets(raw);
   const findings = parseFindings(redacted.text, exitCode);
+  const successfulOutput = exitCode === 0 && redacted.text.trim()
+    ? ["", "Output:", boundedTail(redacted.text, 20, 2000)]
+    : [];
   const readable = [
     `Command: ${displayCommand(command)}`,
     `Exit code: ${exitCode}`,
@@ -218,7 +222,8 @@ export async function runSummary(repoRoot: string, kind: CommandSummary["kind"],
     ...findings.map((f) => {
       const detail = f.detail ? capText(f.detail, 1000).text.replace(/\n/g, "\n  ") : "";
       return `- [${f.severity}] ${f.file ? `${f.file}${f.line ? `:${f.line}` : ""}: ` : ""}${f.title}${detail ? `\n  ${detail}` : ""}`;
-    })
+    }),
+    ...successfulOutput
   ].join("\n");
   const targetChars = rawOutputBytes > 0 ? Math.max(1000, Math.floor(rawOutputBytes * 0.15)) : config.budgets.maxToolOutputChars - 1;
   const capped = capText(readable, Math.min(config.budgets.maxToolOutputChars - 1, targetChars));

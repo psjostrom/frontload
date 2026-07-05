@@ -37,6 +37,34 @@ describe("command summary", () => {
     expect(result.summary).not.toContain("[error]");
   });
 
+  it("does not report passing dogfood test names as errors", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-run-dogfood-success-"));
+    const output = [
+      "✓ tests/unit/install.test.ts (1 test) 12ms",
+      "  ✓ installer > doctor verifies regular installed dogfood path 9ms",
+      "test(\"dogfood path\", () => {})"
+    ].join("\n");
+
+    const result = await runSummary(dir, "test", ["node", "-e", `console.log(${JSON.stringify(output)})`], true);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.findings).toEqual([]);
+    expect(result.summary).not.toContain("[error] dogfood path");
+  });
+
+  it("includes bounded stdout for successful diagnostic commands", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-run-diagnostic-"));
+    const output = "repo-a repoMatches=false\nrepo-b repoMatches=true\n";
+
+    const result = await runSummary(dir, "generic", ["node", "-e", `process.stdout.write(${JSON.stringify(output)})`], true);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.findings).toEqual([]);
+    expect(result.summary).toContain("Output:");
+    expect(result.summary).toContain("repo-a repoMatches=false");
+    expect(result.summary).toContain("repo-b repoMatches=true");
+  });
+
   it("allows common Gradle test commands when Gradle metadata exists", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-gradle-"));
     fs.writeFileSync(path.join(dir, "build.gradle.kts"), "");

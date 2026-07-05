@@ -31,10 +31,14 @@ npx frontload init --agents none
 ```
 
 If `frontload` is not already available on your `PATH`, `init` prompts before
-installing the package globally with your package manager. Restart your editor
-after init completes; MCP clients load server configuration at startup.
+installing the package globally with npm. Restart your editor after init
+completes; MCP clients load server configuration at startup.
 
 Add `.frontload/` to your repository's `.gitignore`.
+
+Run `npx frontload init` separately in each repository. Frontload writes
+repo-local MCP config where the agent supports it, so initializing another repo
+does not replace the first repo's MCP entry.
 
 ## What You Get
 
@@ -165,7 +169,7 @@ files and patch baselines for a git range.
 npx frontload init --agents codex
 ```
 
-Init merges the Frontload MCP server into `~/.codex/config.toml`, copies the
+Init writes the Frontload MCP server to project `.codex/config.toml`, copies the
 Frontload skill to `~/.codex/skills/frontload`, and merges Frontload command
 hooks into `~/.codex/hooks.json`.
 
@@ -194,6 +198,22 @@ Claude hooks can bound native reads, rewrite broad or configured shell commands,
 and bound noisy Grep/Glob output. The hooks apply only in repositories that
 contain `.frontload/`.
 
+## Troubleshooting
+
+Run doctor from the initialized repo:
+
+```bash
+frontload doctor --repo .
+```
+
+Doctor checks local state, the active Codex MCP config scope, and whether the
+configured MCP command can launch and answer `fl_policy`. If doctor passes but a
+currently open Codex session still reports `Transport closed`, restart Codex so
+it reloads the MCP process. If doctor reports `legacyGlobalConflict`, an older
+global `~/.codex/config.toml` Frontload entry points at another repo; the
+project `.codex/config.toml` is preferred, and the legacy global entry can be
+removed once you no longer need it.
+
 ## CLI Reference
 
 ### `init`
@@ -214,13 +234,13 @@ entries created by init pin `--repo` to the absolute path of the initialized
 repository so editor launch directories do not change which repo Frontload
 serves:
 
-- `codex`: merges `mcp_servers.frontload` into `~/.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
+- `codex`: writes `mcp_servers.frontload` into project `.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
 
 If `frontload` is not already installed globally, `init` prompts before running
-the package-manager-specific global install command. Use `--yes` to approve the
-global install prompt in automation. Restart the editor after init completes;
-MCP clients load server config at startup.
+`npm install -g frontload`. Use `--yes` to approve the global install prompt in
+automation. Restart the editor after init completes; MCP clients load server
+config at startup.
 
 ### `upgrade`
 
@@ -247,10 +267,11 @@ frontload doctor --repo .
 frontload doctor --repo . --dogfood
 ```
 
-Checks the local environment and Frontload state directory. Add `--dogfood` to
-fail when the active Codex setup is not using the regular installed
-`frontload` command for the requested repo. `--home <dir>` points doctor at an
-alternate home directory for agent configuration checks.
+Checks the local environment, Frontload state directory, active Codex MCP config,
+and whether the configured MCP command can launch and answer a health request.
+Add `--dogfood` to fail when the active Codex setup is not using the regular
+installed `frontload` command for the requested repo. `--home <dir>` points
+doctor at an alternate home directory for agent configuration checks.
 
 ### `index`
 
