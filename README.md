@@ -244,9 +244,13 @@ npx frontload@latest upgrade
 
 ```bash
 frontload doctor --repo .
+frontload doctor --repo . --dogfood
 ```
 
-Checks the local environment and Frontload state directory.
+Checks the local environment and Frontload state directory. Add `--dogfood` to
+fail when the active Codex setup is not using the regular installed
+`frontload` command for the requested repo. `--home <dir>` points doctor at an
+alternate home directory for agent configuration checks.
 
 ### `index`
 

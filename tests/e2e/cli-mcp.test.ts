@@ -28,6 +28,39 @@ function writeShellScript(file: string, content: string): void {
   fs.chmodSync(file, 0o755);
 }
 
+const dogfoodFingerprintFiles = [
+  "package.json",
+  "dist/src/cli/index.js",
+  "dist/src/install/install.js",
+  "dist/src/mcp/server.js",
+  "plugins/codex/skills/frontload/SKILL.md",
+  "plugins/codex/hooks/hooks.json",
+  "frontload.config.example.json"
+];
+
+function writeDogfoodPackageFiles(targetRoot: string, version: string, sourceRoot = path.resolve(".")): void {
+  for (const file of dogfoodFingerprintFiles) {
+    const source = path.join(sourceRoot, file);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(targetRoot, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  }
+  const packageFile = path.join(targetRoot, "package.json");
+  const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+  fs.writeFileSync(packageFile, `${JSON.stringify({ ...pkg, version }, null, 2)}\n`);
+}
+
+function writeInstalledFrontloadPackage(binParent: string, version: string, sourceRoot = path.resolve(".")): string {
+  const packageRoot = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-installed-package-"));
+  writeDogfoodPackageFiles(packageRoot, version, sourceRoot);
+  const executable = path.join(packageRoot, "bin/frontload");
+  writeShellScript(executable, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi\nexit 0\n`);
+  fs.mkdirSync(binParent, { recursive: true });
+  fs.symlinkSync(executable, path.join(binParent, "frontload"));
+  return packageRoot;
+}
+
 function writeNoisySearchRepo(): string {
   const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-lean-"));
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
@@ -574,6 +607,155 @@ describe("e2e proof workflow", () => {
       });
     } finally {
       await client.close();
+    }
+  });
+
+  it("exits the MCP server when stdio closes", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-stdin-close-"));
+    const child = execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "mcp", "--repo", repo], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      reject: false,
+      timeout: 5000
+    });
+
+    child.stdin?.end();
+    const result = await child;
+
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+  });
+
+  it("doctor verifies the regular installed Codex dogfood path", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-dogfood-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-bin-"));
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as { version: string };
+    const codexConfig = path.join(home, ".codex/config.toml");
+    writeDogfoodPackageFiles(repo, pkg.version);
+    writeInstalledFrontloadPackage(bin, pkg.version);
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, [
+      "[mcp_servers.frontload]",
+      "command = \"frontload\"",
+      `args = ["mcp", "--repo", "${repo}"]`,
+      "enabled = true",
+      ""
+    ].join("\n"));
+
+    const result = await execa(
+      process.execPath,
+      [path.resolve("dist/src/cli/index.js"), "doctor", "--repo", repo, "--home", home, "--dogfood"],
+      {
+        env: {
+          ...process.env,
+          PATH: bin
+        }
+      }
+    );
+    const data = JSON.parse(result.stdout);
+
+    expect(data.checks.dogfood.ok).toBe(true);
+    expect(data.checks.dogfood.installedCommand).toMatchObject({
+      available: true,
+      version: pkg.version,
+      matchesCurrentVersion: true,
+      matchesTargetPackage: true,
+      regularInstall: true
+    });
+    expect(data.checks.dogfood.codex).toMatchObject({
+      configured: true,
+      command: "frontload",
+      args: ["mcp", "--repo", repo],
+      usesInstalledCommand: true,
+      startsMcp: true,
+      enabledForUse: true,
+      repoIsAbsolute: true,
+      repoMatches: true
+    });
+  });
+
+  it("keeps plain doctor independent from dogfood validation", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-plain-"));
+    const result = await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "doctor", "--repo", repo]);
+    const data = JSON.parse(result.stdout);
+
+    expect(data.summary).toBe("doctor completed");
+    expect(data.checks.dogfood).toBeUndefined();
+  });
+
+  it("rejects invalid dogfood configurations", async () => {
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as { version: string };
+    const cases = [
+      {
+        name: "missing Codex config",
+        writeConfig: false,
+        expected: { codex: { configured: false } }
+      },
+      {
+        name: "non-MCP command",
+        lines: (repo: string) => [`args = ["doctor", "--repo", "${repo}"]`],
+        expected: { codex: { startsMcp: false } }
+      },
+      {
+        name: "disabled server",
+        lines: (repo: string) => [`args = ["mcp", "--repo", "${repo}"]`, "enabled = false"],
+        expected: { codex: { enabledForUse: false } }
+      },
+      {
+        name: "relative repo",
+        lines: () => ['args = ["mcp", "--repo", "."]', "enabled = true"],
+        expected: { codex: { repoIsAbsolute: false, repoMatches: false } }
+      },
+      {
+        name: "version mismatch",
+        installedVersion: "0.0.0",
+        lines: (repo: string) => [`args = ["mcp", "--repo", "${repo}"]`, "enabled = true"],
+        expected: { installedCommand: { matchesCurrentVersion: false } }
+      },
+      {
+        name: "ephemeral path",
+        binSubdir: "_npx/123/bin",
+        lines: (repo: string) => [`args = ["mcp", "--repo", "${repo}"]`, "enabled = true"],
+        expected: { installedCommand: { available: false } }
+      }
+    ];
+
+    for (const scenario of cases) {
+      const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", `frontload-doctor-${scenario.name.replaceAll(" ", "-")}-`));
+      const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-invalid-home-"));
+      const binRoot = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-invalid-bin-"));
+      const bin = path.join(binRoot, scenario.binSubdir ?? "global/bin");
+      writeDogfoodPackageFiles(repo, pkg.version);
+      writeInstalledFrontloadPackage(bin, scenario.installedVersion ?? pkg.version);
+      if (scenario.writeConfig !== false) {
+        const codexConfig = path.join(home, ".codex/config.toml");
+        fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+        fs.writeFileSync(codexConfig, [
+          "[mcp_servers.frontload]",
+          "command = \"frontload\"",
+          ...(scenario.lines?.(repo) ?? []),
+          ""
+        ].join("\n"));
+      }
+
+      const result = await execa(
+        process.execPath,
+        [path.resolve("dist/src/cli/index.js"), "doctor", "--repo", repo, "--home", home, "--dogfood"],
+        {
+          env: {
+            ...process.env,
+            PATH: bin
+          },
+          reject: false
+        }
+      );
+      const data = JSON.parse(result.stdout);
+
+      expect(result.exitCode, scenario.name).toBe(1);
+      expect(data.checks.dogfood.ok, scenario.name).toBe(false);
+      expect(data.checks.dogfood, scenario.name).toMatchObject(scenario.expected);
     }
   });
 

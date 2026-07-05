@@ -21,8 +21,28 @@ CI runs, in order: `pnpm lint`, `pnpm build`, `pnpm test`, `pnpm e2e`, then
 
 ## Frontload Workflow
 
-This repo dogfoods Frontload. Before broad exploration, call `fl_repo_dossier`
-when the Frontload MCP tools are available.
+This repo dogfoods Frontload through the normal user install and init path.
+Always dogfood Frontload code from the latest `origin/main` commit or newer:
+fetch `origin/main`, confirm the current branch is equal to or descended from it,
+then build, pack, install, and initialize the package like a user would.
+
+```bash
+pnpm build
+mkdir -p .frontload/dogfood
+rm -f .frontload/dogfood/frontload-*.tgz
+npm pack --pack-destination .frontload/dogfood
+npm install -g .frontload/dogfood/frontload-*.tgz
+frontload init --repo . --agents codex --force
+frontload doctor --repo . --dogfood
+```
+
+Restart Codex after `frontload init` so MCP configuration is reloaded. Do not
+dogfood an older global `frontload` install in this repo.
+
+Before broad exploration, call `fl_repo_dossier` when the Frontload MCP tools are
+available. Treat Frontload tool failures, timeouts, stale MCP processes, or
+excessive CPU/RAM during Frontload development as product bugs to investigate,
+not as ordinary workflow noise.
 
 Prefer:
 - `fl_search` over broad grep
