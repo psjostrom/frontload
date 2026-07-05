@@ -16,6 +16,10 @@ node dist/src/cli/index.js validate-plugins --repo .
 pnpm proof
 ```
 
+`pnpm-workspace.yaml` is intentional even though this is not a workspace: it
+disables pnpm's pre-run auto-install check and explicitly approves `esbuild`
+postinstall scripts so Codex runtime pnpm can run scripts deterministically.
+
 CI runs, in order: `pnpm lint`, `pnpm build`, `pnpm test`, `pnpm e2e`, then
 `node dist/src/cli/index.js validate-plugins --repo .`.
 
