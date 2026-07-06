@@ -129,6 +129,24 @@ describe("upgrade output formatting", () => {
     expect(output).not.toContain("\"writes\"");
   });
 
+  it("does not render override home paths as the user's home", () => {
+    const overrideHome = path.join(path.dirname(os.homedir()), "frontload-test-home");
+    const codexConfig = path.join(overrideHome, ".codex/config.toml");
+    const output = formatUpgradeOutput({
+      homeDir: overrideHome,
+      agents: [
+        {
+          agent: "codex",
+          writes: [{ path: codexConfig, action: "updated" }],
+          notes: []
+        }
+      ]
+    });
+
+    expect(output).toContain(`[updated] ${codexConfig}`);
+    expect(output).not.toContain("[updated] ~/.codex/config.toml");
+  });
+
   it("renders next steps for both Codex and Claude upgrades", () => {
     const output = formatUpgradeOutput({
       agents: [

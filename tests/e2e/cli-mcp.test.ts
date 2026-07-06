@@ -740,7 +740,7 @@ describe("e2e proof workflow", () => {
     expect(result.stdout).toContain("| Global command |");
     expect(result.stdout).toContain("[updated] npm install -g frontload@latest");
     expect(result.stdout).toContain("| Codex setup |");
-    expect(result.stdout).toContain("[updated] ~/.codex/config.toml");
+    expect(result.stdout).toContain(`[updated] ${codexConfig}`);
     expect(result.stdout).toContain("Restart Codex after upgrade completes");
     expect(result.stdout).not.toContain("\"agents\"");
     expect(result.stdout).not.toContain("\"repoRoot\"");
