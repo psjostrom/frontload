@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { hookDefinitions } from "../../src/hooks/definitions.js";
 import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
 
 function writeExecutable(dir: string, name = "frontload"): string {
@@ -49,7 +50,7 @@ describe("installer", () => {
           hooks: [
             {
               type: "command",
-              command: "frontload hook pre-tool-use --host codex",
+              command: hookDefinitions.codex[0].hook.command,
               timeout: 10,
               statusMessage: "Applying Frontload budget policy"
             }
@@ -62,7 +63,7 @@ describe("installer", () => {
           hooks: [
             {
               type: "command",
-              command: "frontload hook post-tool-use --host codex",
+              command: hookDefinitions.codex[1].hook.command,
               timeout: 10,
               statusMessage: "Bounding Frontload command output"
             }
@@ -92,7 +93,7 @@ describe("installer", () => {
     expect(configA).toContain(`args = ["mcp", "--repo", "${repoA}"]`);
     expect(configB).toContain(`args = ["mcp", "--repo", "${repoB}"]`);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
-    expect(hooks.hooks.PreToolUse[0].hooks[0].command).toBe("frontload hook pre-tool-use --host codex");
+    expect(hooks.hooks.PreToolUse[0].hooks[0].command).toBe(hookDefinitions.codex[0].hook.command);
   });
 
   it("configures all supported agent adapters from init", () => {
@@ -287,10 +288,10 @@ describe("installer", () => {
     expect(result.agents[0].notes.join(" ")).toContain("/hooks");
     expect(hooks.PreToolUse).toHaveLength(2);
     expect(hooks.PreToolUse[0].hooks).toEqual([{ type: "command", command: "other-pre-hook" }]);
-    expect(hooks.PreToolUse[1].hooks[0].command).toBe("frontload hook pre-tool-use --host codex");
+    expect(hooks.PreToolUse[1].hooks[0].command).toBe(hookDefinitions.codex[0].hook.command);
     expect(hooks.PostToolUse).toHaveLength(2);
     expect(hooks.PostToolUse[0].hooks).toEqual([{ type: "command", command: "other-post-hook" }]);
-    expect(hooks.PostToolUse[1].hooks[0].command).toBe("frontload hook post-tool-use --host codex");
+    expect(hooks.PostToolUse[1].hooks[0].command).toBe(hookDefinitions.codex[1].hook.command);
   });
 
   it("parses agent lists", () => {

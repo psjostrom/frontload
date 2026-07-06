@@ -47,8 +47,9 @@ When setup is complete, Codex can call Frontload MCP tools for:
 The skill tells Codex to prefer those tools before broad raw exploration.
 
 The hooks enforce Frontload rewrites and output caps for interceptable Bash
-calls in initialized repositories. They are inert outside repositories
-containing `.frontload/`.
+calls in initialized repositories. They are stored globally, but their command
+checks for `.frontload/` and exits before starting `frontload` outside
+initialized repositories.
 
 Because MCP config is project-local, running init in another repo does not
 replace this repo's Frontload MCP entry. If `frontload doctor --repo .` passes

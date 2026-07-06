@@ -176,7 +176,8 @@ Frontload skill to `~/.codex/skills/frontload`, and merges Frontload command
 hooks into `~/.codex/hooks.json`.
 
 Open `/hooks` once after installation to approve the command hooks. The hooks
-apply only in repositories that contain `.frontload/`.
+are stored globally, but their command first checks for `.frontload/` and exits
+before starting `frontload` outside initialized repositories.
 
 Codex hook coverage follows the hook runtime Codex exposes: Frontload rewrites
 supported Bash calls before execution and bounds oversized Bash output after
@@ -236,7 +237,7 @@ entries created by init pin `--repo` to the absolute path of the initialized
 repository so editor launch directories do not change which repo Frontload
 serves:
 
-- `codex`: writes `mcp_servers.frontload` into project `.codex/config.toml`, merges Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
+- `codex`: writes `mcp_servers.frontload` into project `.codex/config.toml`, merges guarded Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
 
 If `frontload` is not already installed globally, `init` prompts before running

@@ -15,6 +15,10 @@ export type HookDefinition = {
   hook: HookCommand;
 };
 
+function codexHookCommand(hook: "pre-tool-use" | "post-tool-use"): string {
+  return `dir="\${CODEX_PROJECT_DIR:-$PWD}"; if [ -f "$dir" ]; then dir=$(dirname "$dir"); fi; dir=$(cd "$dir" 2>/dev/null && pwd -P) || exit 0; while :; do if [ -d "$dir/.frontload" ]; then exec frontload hook ${hook} --host codex; fi; parent=$(dirname "$dir"); if [ "$parent" = "$dir" ]; then exit 0; fi; dir="$parent"; done`;
+}
+
 export const hookDefinitions: Record<HookHost, HookDefinition[]> = {
   claude: [
     {
@@ -44,7 +48,7 @@ export const hookDefinitions: Record<HookHost, HookDefinition[]> = {
       matcher: "^Bash$",
       hook: {
         type: "command",
-        command: "frontload hook pre-tool-use --host codex",
+        command: codexHookCommand("pre-tool-use"),
         timeout: 10,
         statusMessage: "Applying Frontload budget policy"
       }
@@ -54,7 +58,7 @@ export const hookDefinitions: Record<HookHost, HookDefinition[]> = {
       matcher: "^Bash$",
       hook: {
         type: "command",
-        command: "frontload hook post-tool-use --host codex",
+        command: codexHookCommand("post-tool-use"),
         timeout: 10,
         statusMessage: "Bounding Frontload command output"
       }

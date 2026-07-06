@@ -1,14 +1,24 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { readEvents } from "../../src/budget/events.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../../src/gate/entry.js";
+import { hookDefinitions } from "../../src/hooks/definitions.js";
 
 function initializedRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-entry-"));
   fs.mkdirSync(path.join(repo, ".frontload"));
   return repo;
+}
+
+function writeFakeFrontload(binDir: string): string {
+  const marker = path.join(binDir, "frontload-invoked.log");
+  const frontload = path.join(binDir, "frontload");
+  fs.writeFileSync(frontload, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FRONTLOAD_HOOK_MARKER\"\n");
+  fs.chmodSync(frontload, 0o755);
+  return marker;
 }
 
 describe("hook entry adapters", () => {
@@ -150,6 +160,53 @@ describe("hook entry adapters", () => {
     expect(await runPostToolUseHook("codex", payload)).toBeNull();
     expect(await runPreToolUseHook("claude", "{not json")).toBeNull();
     expect(await runPostToolUseHook("claude", "{not json")).toBeNull();
+  });
+
+  it("does not invoke the configured Codex global hook command outside initialized repositories", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-global-uninitialized-"));
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-bin-"));
+    const marker = writeFakeFrontload(binDir);
+    const env = {
+      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      CODEX_PROJECT_DIR: repo,
+      FRONTLOAD_HOOK_MARKER: marker
+    };
+
+    for (const definition of hookDefinitions.codex) {
+      await execa("sh", ["-c", definition.hook.command], {
+        cwd: repo,
+        env,
+        input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "pnpm test" }, tool_response: "output" })
+      });
+    }
+
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it("invokes the configured Codex global hook command inside initialized repositories", async () => {
+    const repo = initializedRepo();
+    const nested = path.join(repo, "src/nested");
+    fs.mkdirSync(nested, { recursive: true });
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-bin-"));
+    const marker = writeFakeFrontload(binDir);
+    const env = {
+      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      CODEX_PROJECT_DIR: nested,
+      FRONTLOAD_HOOK_MARKER: marker
+    };
+
+    for (const definition of hookDefinitions.codex) {
+      await execa("sh", ["-c", definition.hook.command], {
+        cwd: nested,
+        env,
+        input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "pnpm test" }, tool_response: "output" })
+      });
+    }
+
+    expect(fs.readFileSync(marker, "utf8").split("\n").filter(Boolean)).toEqual([
+      "hook pre-tool-use --host codex",
+      "hook post-tool-use --host codex"
+    ]);
   });
 
   it("finds an initialized repository from a nested working directory", async () => {

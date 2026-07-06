@@ -37,8 +37,9 @@ may require review again.
 Codex enforcement applies to Bash calls that the current Codex hook runtime
 intercepts. Codex does not currently expose Claude-equivalent native
 Read/Grep/Glob hook names, so native read and search coverage is not equivalent.
-The Frontload hooks remain inert in repositories that do not contain a
-`.frontload` directory.
+The Frontload hooks are stored globally, but their command first checks for a
+`.frontload` directory from the active project upward. Repositories without
+Frontload initialization exit before starting the `frontload` CLI.
 
 Run `frontload doctor --repo .` to verify the active config. Doctor reports
 whether Codex is using project or global config, whether the configured MCP
