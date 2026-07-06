@@ -88,6 +88,45 @@ function writeNoisySearchRepo(): string {
 }
 
 describe("e2e proof workflow", () => {
+  it("writes generated proof files under repo state", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-proof-output-"));
+    fs.mkdirSync(path.join(repo, ".frontload/logs"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".frontload/logs/2026-07-04T14-48-39-741Z-test.log"), [
+      "FAIL src/chart/ChartTooltip.test.tsx",
+      "updates stale chart tooltip value after sensor reconnect",
+      "expected '92 mg/dL' to be '93 mg/dL'",
+      ""
+    ].join("\n"));
+
+    await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "proof", "--repo", repo]);
+
+    const proofDir = path.join(repo, ".frontload/proof");
+    expect(fs.existsSync(path.join(proofDir, "TEST_REPORT.md"))).toBe(true);
+    expect(fs.existsSync(path.join(proofDir, "raw-vs-summary.json"))).toBe(true);
+    expect(fs.existsSync(path.join(proofDir, "mcp-transcript.jsonl"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, "proof/TEST_REPORT.md"))).toBe(false);
+
+    const rawVsSummary = JSON.parse(fs.readFileSync(path.join(proofDir, "raw-vs-summary.json"), "utf8"));
+    expect(rawVsSummary.rawOutputBytes).toBeGreaterThan(0);
+    expect(rawVsSummary.preservedFindings).toEqual(expect.arrayContaining([
+      "updates stale chart tooltip value after sensor reconnect",
+      "src/chart/ChartTooltip.test.tsx",
+      "expected '92 mg/dL' to be '93 mg/dL'"
+    ]));
+    expect(rawVsSummary.fullLog).toMatch(/^<repo>\/\.frontload\/logs\/.*test\.log$/);
+  });
+
+  it("writes demo fixture dossier under ignored repo state", async () => {
+    const fixtureDossier = path.join(fixture, ".frontload/proof/sample-dossier.md");
+    fs.rmSync(fixtureDossier, { force: true });
+
+    await execa("pnpm", ["demo:fixture"]);
+
+    expect(fs.existsSync(fixtureDossier)).toBe(true);
+    expect(fs.readFileSync(fixtureDossier, "utf8")).toContain("# Frontload Dossier");
+    expect(fs.existsSync("proof/sample-dossier.md")).toBe(false);
+  });
+
   it("runs host-aware hook subcommands through the built CLI", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-cli-"));
     fs.mkdirSync(path.join(repo, ".frontload"));
@@ -760,8 +799,9 @@ describe("e2e proof workflow", () => {
   });
 
   it("calls required tool handlers and stores transcript", async () => {
-    fs.mkdirSync("proof", { recursive: true });
-    fs.writeFileSync("proof/mcp-transcript.jsonl", "");
+    const transcriptPath = path.join(fixture, ".frontload/proof/mcp-transcript.jsonl");
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.writeFileSync(transcriptPath, "");
     fs.rmSync(path.join(fixture, ".frontload/events.jsonl"), { force: true });
     const handlers = createMcpHandlers(fixture);
     const runRepo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-proof-run-"));
@@ -787,7 +827,7 @@ describe("e2e proof workflow", () => {
       const text = response.content[0].text;
       const data = JSON.parse(text);
       const summary = sanitizeProofSummary(data.summary ?? "ok", [runRepo]);
-      fs.appendFileSync("proof/mcp-transcript.jsonl", JSON.stringify({ tool, response: { summary } }) + "\n");
+      fs.appendFileSync(transcriptPath, JSON.stringify({ tool, response: { summary } }) + "\n");
     }
     const index = JSON.parse(calls.find(([tool]) => tool === "fl_repo_index")![1].content[0].text);
     const dossier = JSON.parse(calls.find(([tool]) => tool === "fl_repo_dossier")![1].content[0].text);
@@ -824,7 +864,7 @@ describe("e2e proof workflow", () => {
       const event = eventLog.find((candidate) => candidate.operation === operations[tool]);
       expect(event?.outputBytes).toBe(Buffer.byteLength(response.content[0].text));
     }
-    expect(fs.existsSync("proof/mcp-transcript.jsonl")).toBe(true);
+    expect(fs.existsSync(transcriptPath)).toBe(true);
   });
 
   it("serves registered MCP tools over stdio", async () => {

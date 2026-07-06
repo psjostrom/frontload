@@ -871,7 +871,7 @@ Expected:
 - All commands pass.
 - `git diff --check` prints no whitespace errors.
 
-- [ ] **Step 5: Inspect proof timestamp churn**
+- [ ] **Step 5: Inspect proof generated artifacts**
 
 After `pnpm e2e`, run:
 
@@ -882,7 +882,7 @@ git status -sb
 Expected:
 
 - Only intended source, test, and doc files are modified.
-- If `proof/mcp-transcript.jsonl` changes only by timestamp churn, restore that file by applying a minimal patch or checking out only that file after confirming the diff contains no intended change.
+- Generated proof artifacts stay under ignored `.frontload/proof/` paths and do not dirty tracked files.
 
 - [ ] **Step 6: Commit docs and verification polish**
 
