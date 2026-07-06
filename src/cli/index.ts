@@ -6,16 +6,19 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { emitKeypressEvents } from "node:readline";
 import readline from "node:readline/promises";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Command, Option } from "commander";
 import { appendEvent, budgetReport, outputSize } from "../budget/events.js";
+import { boundedOutput, cliSerializedOutput, cliVisibleChars, fitSearchOutput, searchResultsOutput } from "../budget/output-bounds.js";
 import { loadConfig } from "../config/config.js";
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
-import { generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
+import { compactRankedResults, generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
-import { detectPackageManager, formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
@@ -31,7 +34,7 @@ type ResultMeasurement<T> = {
 };
 
 function serializeOutput(data: unknown): string {
-  return typeof data === "string" ? `${data}\n` : `${JSON.stringify(data, null, 2)}\n`;
+  return cliSerializedOutput(data);
 }
 
 async function measured<T>(
@@ -179,8 +182,7 @@ function configuresAgent(agents: Array<"codex" | "claude" | "all">, agent: "code
 }
 
 async function ensureGlobalFrontload(approved: boolean): Promise<GlobalInstallResult> {
-  const packageManager = detectPackageManager();
-  const install = globalInstallCommand(packageManager);
+  const install = globalInstallCommand();
   if (isGloballyInstalled()) {
     return {
       action: "skipped",
@@ -198,12 +200,11 @@ async function ensureGlobalFrontload(approved: boolean): Promise<GlobalInstallRe
       notes: [`Install frontload globally before restarting your editor: ${formatCommand(install)}`]
     };
   }
-  return installGlobalFrontload(packageManager);
+  return installGlobalFrontload();
 }
 
 async function ensureGlobalFrontloadUpgrade(approved: boolean): Promise<GlobalInstallResult> {
-  const packageManager = detectPackageManager();
-  const install = globalInstallCommand(packageManager, "frontload@latest");
+  const install = globalInstallCommand("npm", "frontload@latest");
   const canUpgrade = approved || await promptApproveGlobalUpgrade(formatCommand(install));
   if (!canUpgrade) {
     return {
@@ -213,7 +214,7 @@ async function ensureGlobalFrontloadUpgrade(approved: boolean): Promise<GlobalIn
       notes: [`Upgrade frontload manually before restarting your editor: ${formatCommand(install)}`]
     };
   }
-  return upgradeGlobalFrontload(packageManager);
+  return upgradeGlobalFrontload();
 }
 
 function parseGlobalInstallAction(value: string | undefined): GlobalInstallResult["action"] | undefined {
@@ -263,6 +264,7 @@ type InstalledFrontloadCheck = {
 
 type CodexDogfoodCheck = {
   configPath: string;
+  configScope: "project" | "global" | "none";
   configured: boolean;
   command?: string;
   args?: string[];
@@ -273,6 +275,11 @@ type CodexDogfoodCheck = {
   enabledForUse: boolean;
   repoIsAbsolute: boolean;
   repoMatches: boolean;
+  launches: boolean;
+  responds: boolean;
+  legacyGlobalConflict: boolean;
+  restartAdvice?: string;
+  probeError?: string;
   error?: string;
 };
 
@@ -393,17 +400,37 @@ function doctorRepoArg(args: string[] | undefined): string | undefined {
   return undefined;
 }
 
-function codexDogfoodCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck {
-  const configPath = mcpConfigAdapters.codex.globalPath(homeDir);
-  if (!configPath) {
-    return { configPath: "", configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+function cleanProcessEnv(extra: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
   }
+  return { ...env, ...extra };
+}
+
+function emptyCodexCheck(configPath: string, configScope: CodexDogfoodCheck["configScope"], legacyGlobalConflict = false): CodexDogfoodCheck {
+  return {
+    configPath,
+    configScope,
+    configured: false,
+    usesInstalledCommand: false,
+    startsMcp: false,
+    enabledForUse: false,
+    repoIsAbsolute: false,
+    repoMatches: false,
+    launches: false,
+    responds: false,
+    legacyGlobalConflict
+  };
+}
+
+function readCodexConfigCheck(configPath: string, configScope: CodexDogfoodCheck["configScope"], repoRoot: string, legacyGlobalConflict = false): CodexDogfoodCheck {
   if (!fs.existsSync(configPath)) {
-    return { configPath, configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+    return emptyCodexCheck(configPath, configScope, legacyGlobalConflict);
   }
   try {
     const block = doctorTomlTable(fs.readFileSync(configPath, "utf8"), "mcp_servers.frontload");
-    if (!block) return { configPath, configured: false, usesInstalledCommand: false, startsMcp: false, enabledForUse: false, repoIsAbsolute: false, repoMatches: false };
+    if (!block) return emptyCodexCheck(configPath, configScope, legacyGlobalConflict);
     const command = doctorTomlJsonValue<string>(block, "command");
     const args = doctorTomlJsonValue<string[]>(block, "args");
     const enabled = doctorTomlJsonValue<boolean>(block, "enabled");
@@ -411,48 +438,130 @@ function codexDogfoodCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck
     const repoIsAbsolute = !!repo && path.isAbsolute(repo);
     return {
       configPath,
+      configScope,
       configured: true,
       command,
       args,
       enabled,
       repo,
       usesInstalledCommand: command === "frontload",
-      startsMcp: args?.[0] === "mcp",
+      startsMcp: args?.includes("mcp") === true,
       enabledForUse: enabled !== false,
       repoIsAbsolute,
-      repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false
+      repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false,
+      launches: false,
+      responds: false,
+      legacyGlobalConflict
     };
   } catch (error) {
     return {
       configPath,
+      configScope,
       configured: false,
       usesInstalledCommand: false,
       startsMcp: false,
       enabledForUse: false,
       repoIsAbsolute: false,
       repoMatches: false,
+      launches: false,
+      responds: false,
+      legacyGlobalConflict,
       error: error instanceof Error ? error.message : String(error)
     };
   }
 }
 
-function dogfoodCheck(repoRoot: string, homeDir: string) {
+function isNodeFrontloadMcpCommand(command: string | undefined, args: string[] | undefined): boolean {
+  const cliPath = args?.[0];
+  return command === process.execPath
+    && typeof cliPath === "string"
+    && path.resolve(cliPath) === path.join(packageRoot(), "dist/src/cli/index.js")
+    && args?.[1] === "mcp";
+}
+
+function canProbeCodexMcp(check: CodexDogfoodCheck): boolean {
+  if (!check.configured || !check.command || !check.args || !check.startsMcp || !check.enabledForUse || !check.repoMatches) return false;
+  if (check.command === "frontload" && check.args[0] === "mcp") return true;
+  return isNodeFrontloadMcpCommand(check.command, check.args);
+}
+
+async function probeCodexMcp(check: CodexDogfoodCheck): Promise<CodexDogfoodCheck> {
+  if (!canProbeCodexMcp(check)) {
+    return check.configured && check.startsMcp && check.enabledForUse
+      ? { ...check, probeError: "Skipped MCP launch because the configured command is not a managed Frontload command for this repo." }
+      : check;
+  }
+  const command = check.command!;
+  const args = check.args!;
+  const transport = new StdioClientTransport({
+    command,
+    args,
+    env: cleanProcessEnv({ FRONTLOAD_DOCTOR_PROBE: "1" }),
+    stderr: "pipe"
+  });
+  const client = new Client({ name: "frontload-doctor", version: packageVersion });
+  let launches = false;
+  try {
+    await client.connect(transport, { timeout: 5000, maxTotalTimeout: 5000 });
+    launches = true;
+    const response = await client.callTool({ name: "fl_policy", arguments: {} }, undefined, { timeout: 5000, maxTotalTimeout: 5000 });
+    const content = response.content as Array<{ type: string; text?: string }>;
+    const text = content.find((part) => part.type === "text")?.text;
+    const data = text ? JSON.parse(text) as unknown : undefined;
+    return {
+      ...check,
+      launches: true,
+      responds: typeof data === "object" && data !== null,
+      restartAdvice: "If Codex tools still fail with Transport closed after this probe passes, restart Codex so it reloads the MCP process."
+    };
+  } catch (error) {
+    return {
+      ...check,
+      launches,
+      responds: false,
+      probeError: error instanceof Error ? error.message : String(error)
+    };
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<CodexDogfoodCheck> {
+  const projectPath = mcpConfigAdapters.codex.projectPath(repoRoot);
+  const globalPath = mcpConfigAdapters.codex.globalPath(homeDir);
+  const globalCheck = globalPath
+    ? readCodexConfigCheck(globalPath, "global", repoRoot)
+    : emptyCodexCheck("", "none");
+  const legacyGlobalConflict = globalCheck.configured && !globalCheck.repoMatches;
+  const projectCheck = projectPath
+    ? readCodexConfigCheck(projectPath, "project", repoRoot, legacyGlobalConflict)
+    : emptyCodexCheck("", "none", legacyGlobalConflict);
+  const active = projectCheck.configured
+    ? projectCheck
+    : globalCheck.configured
+      ? { ...globalCheck, legacyGlobalConflict }
+      : emptyCodexCheck(projectPath ?? globalPath ?? "", "none", legacyGlobalConflict);
+  return probeCodexMcp(active);
+}
+
+async function dogfoodCheck(repoRoot: string, homeDir: string, codex?: CodexDogfoodCheck) {
   const installedCommand = installedFrontloadCheck(repoRoot);
-  const codex = codexDogfoodCheck(repoRoot, homeDir);
+  const activeCodex = codex ?? await codexDogfoodCheck(repoRoot, homeDir);
   return {
     ok: installedCommand.available
       && installedCommand.matchesCurrentVersion === true
       && installedCommand.matchesTargetPackage === true
       && installedCommand.regularInstall === true
-      && codex.configured
-      && codex.usesInstalledCommand
-      && codex.startsMcp
-      && codex.enabledForUse
-      && codex.repoIsAbsolute
-      && codex.repoMatches,
+      && activeCodex.configured
+      && activeCodex.usesInstalledCommand
+      && activeCodex.startsMcp
+      && activeCodex.enabledForUse
+      && activeCodex.repoIsAbsolute
+      && activeCodex.repoMatches
+      && activeCodex.responds,
     currentVersion: packageVersion,
     installedCommand,
-    codex
+    codex: activeCodex
   };
 }
 
@@ -523,7 +632,8 @@ program.command("doctor")
   .action(async (opts) => {
     const repoRoot = resolveRepo(opts.repo);
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
-    const dogfood = opts.dogfood ? dogfoodCheck(repoRoot, homeDir) : undefined;
+    const codex = await codexDogfoodCheck(repoRoot, homeDir);
+    const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir, codex) : undefined;
     const checks = {
       node: process.versions.node,
       repoRoot,
@@ -534,6 +644,7 @@ program.command("doctor")
         return true;
       })(),
       mcpServer: true,
+      codex,
       platform: os.platform(),
       ...(dogfood ? { dogfood } : {})
     };
@@ -570,14 +681,15 @@ program.command("dossier").argument("<task>").option("--repo <repo>", "repositor
 
 program.command("search").argument("<query>").option("--repo <repo>", "repository root", ".").option("--limit <n>", "10").action(async (query, opts) => {
   const repoRoot = resolveRepo(opts.repo);
+  const config = loadConfig(repoRoot);
   const measuredResult = await measured(
     repoRoot,
     "search",
     { query, opts },
     () => searchIndexMeasured(repoRoot, query, Number(opts.limit)),
     {
-      output: (result) => result.results,
-      baseline: (result) => ({ bytes: outputSize(serializeOutput(result.unboundedResults)).bytes, kind: "unbounded-search-results" })
+      output: (result) => fitSearchOutput(config.budgets.maxToolOutputChars, compactRankedResults(result.results), cliVisibleChars),
+      baseline: (result) => ({ bytes: outputSize(serializeOutput(searchResultsOutput(compactRankedResults(result.unboundedResults)))).bytes, kind: "unbounded-search-results" })
     }
   );
   print(measuredResult.output);
@@ -592,11 +704,13 @@ program.command("read")
   .option("--line-count <count>", "maximum number of lines to return", parsePositiveInteger)
   .action(async (file, opts) => {
     const repoRoot = resolveRepo(opts.repo);
+    const config = loadConfig(repoRoot);
     const readOptions = {
       budgetChars: opts.budget as number,
       query: opts.query as string | undefined,
       startLine: opts.startLine as number | undefined,
-      lineCount: opts.lineCount as number | undefined
+      lineCount: opts.lineCount as number | undefined,
+      maxSerializedChars: config.budgets.maxToolOutputChars
     };
     const measuredResult = await measured(
       repoRoot,
@@ -604,7 +718,7 @@ program.command("read")
       { file, opts: readOptions },
       () => readBudgeted(repoRoot, file, readOptions),
       {
-        output: (result) => result,
+        output: (result) => boundedOutput("read", config.budgets.maxToolOutputChars, result, cliVisibleChars).output,
         baseline: (result) => ({ bytes: result.fileSize, kind: "full-file" })
       }
     );

@@ -26,7 +26,7 @@ Restart Claude Code after init. Inside Claude Code, use `/mcp` to verify the
 Frontload MCP server is connected.
 
 If `frontload` is not already installed globally, init prompts before running
-the matching global install command for your package manager.
+`npm install -g frontload`.
 
 ## Behavior
 

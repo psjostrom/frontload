@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { execa } from "execa";
 import { z } from "zod";
 import { appendEvent, budgetReport, outputSize, outputText } from "../budget/events.js";
+import { boundedOutput, fitSearchOutput, searchResultsOutput } from "../budget/output-bounds.js";
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
 import { loadConfig } from "../config/config.js";
@@ -36,83 +37,10 @@ function json(data: unknown): McpTextResponse {
   return { content: [{ type: "text", text: outputText(data) }] };
 }
 
-function compactRunOutput(data: unknown, maxToolOutputChars: number): unknown | undefined {
-  const run = data as Partial<CommandSummary>;
-  if (typeof run !== "object" || run === null || typeof run.exitCode === "undefined" || !Array.isArray(run.findings)) return undefined;
-  const findings = run.findings.slice(0, 3).map((finding) => ({
-    severity: finding.severity,
-    file: finding.file,
-    line: finding.line,
-    title: finding.title
-  }));
-  const compact = {
-    summary: "Run output exceeded maxToolOutputChars and was compacted.",
-    truncated: true,
-    operation: "run",
-    exitCode: run.exitCode,
-    signal: run.signal,
-    fullLogPath: run.fullLogPath,
-    findings
-  };
-  if (outputSize(compact).chars <= maxToolOutputChars) return compact;
-
-  const singleFinding = { ...compact, findings: findings.slice(0, 1) };
-  if (outputSize(singleFinding).chars <= maxToolOutputChars) return singleFinding;
-
-  const noFindings = { ...compact, findings: [] };
-  if (outputSize(noFindings).chars <= maxToolOutputChars) return noFindings;
-
-  return undefined;
-}
-
-function withheldOutput(operation: string, maxToolOutputChars: number, original: { chars: number; bytes: number }, data?: unknown): unknown {
-  if (operation === "run") {
-    const compact = compactRunOutput(data, maxToolOutputChars);
-    if (compact) return compact;
-  }
-
-  const detailed = {
-    summary: "Tool output exceeded maxToolOutputChars and was withheld.",
-    truncated: true,
-    operation,
-    maxToolOutputChars,
-    originalOutputChars: original.chars,
-    originalOutputBytes: original.bytes,
-    hint: "Narrow the request or use a budgeted tool for a smaller excerpt."
-  };
-  if (outputSize(detailed).chars <= maxToolOutputChars) return detailed;
-
-  const compact = { summary: "Tool output withheld.", truncated: true, operation };
-  if (outputSize(compact).chars <= maxToolOutputChars) return compact;
-
-  return { summary: "Tool output withheld.", truncated: true };
-}
-
 function boundedJson(repoRoot: string, operation: string, data: unknown): { response: McpTextResponse; size: { chars: number; bytes: number } } {
-  const originalSize = outputSize(data);
   const config = loadConfig(repoRoot);
-  const bounded = originalSize.chars > config.budgets.maxToolOutputChars
-    ? withheldOutput(operation, config.budgets.maxToolOutputChars, originalSize, data)
-    : data;
-  const size = outputSize(bounded);
-  return { response: json(bounded), size };
-}
-
-function fitSearchData(maxToolOutputChars: number, compactResults: CompactRanked[]): unknown {
-  if (!compactResults.length) return { summary: "Search results from index.", results: [] };
-  let visible = compactResults;
-  let omittedResults = 0;
-  while (visible.length > 0) {
-    const data = {
-      summary: "Search results from index.",
-      results: visible,
-      ...(omittedResults ? { truncated: true, omittedResults } : {})
-    };
-    if (outputSize(data).chars <= maxToolOutputChars) return data;
-    omittedResults += 1;
-    visible = visible.slice(0, -1);
-  }
-  return { summary: "Search results from index.", results: [], truncated: true, omittedResults: compactResults.length };
+  const bounded = boundedOutput(operation, config.budgets.maxToolOutputChars, data);
+  return { response: json(bounded.output), size: bounded.size };
 }
 
 function fitDossierData(
@@ -187,16 +115,21 @@ async function measuredMcp<TInput>(
     return response;
   } finally {
     try {
-      appendEvent(repoRoot, {
-        source: "mcp",
-        operation,
-        inputChars: JSON.stringify(input).length,
-        outputChars,
-        outputBytes,
-        ...(baseline ? { baselineBytes: baseline.bytes, baselineKind: baseline.kind } : {}),
-        durationMs: Date.now() - start,
-        success
-      });
+      const durationMs = Date.now() - start;
+      const memory = durationMs >= 500 ? process.memoryUsage() : undefined;
+      if (!(operation === "policy" && process.env.FRONTLOAD_DOCTOR_PROBE === "1")) {
+        appendEvent(repoRoot, {
+          source: "mcp",
+          operation,
+          inputChars: JSON.stringify(input).length,
+          outputChars,
+          outputBytes,
+          ...(baseline ? { baselineBytes: baseline.bytes, baselineKind: baseline.kind } : {}),
+          durationMs,
+          ...(memory ? { rssBytes: memory.rss, heapUsedBytes: memory.heapUsed } : {}),
+          success
+        });
+      }
     } catch {
       // Fail open: accounting must never block the tool response or mask the original error.
     }
@@ -249,11 +182,11 @@ export function createMcpHandlers(repoRoot: string) {
       measuredMcp(repoRoot, "search", input, async () => {
         const measured = await searchIndexMeasured(repoRoot, input.query, input.limit);
         const config = loadConfig(repoRoot);
-        const data = fitSearchData(config.budgets.maxToolOutputChars, compactRankedResults(measured.results));
+        const data = fitSearchOutput(config.budgets.maxToolOutputChars, compactRankedResults(measured.results));
         return {
           data,
           baseline: {
-            bytes: outputSize({ summary: "Search results from index.", results: measured.unboundedResults }).bytes,
+            bytes: outputSize(searchResultsOutput(compactRankedResults(measured.unboundedResults))).bytes,
             kind: "unbounded-search-results"
           }
         };
@@ -339,5 +272,23 @@ export async function startMcp(repoRoot: string): Promise<void> {
   server.tool("fl_git_diff_summary", "Summarize git diff. Use instead of dumping full diffs; not for applying patches.", { staged: z.boolean().default(false) }, handlers.diff);
   server.tool("fl_budget_report", "Return budget event totals. Use before/after large work; not a profiler.", {}, handlers.budget);
   server.tool("fl_local_scout", "Optional local model extension point. Use only when configured; do not expect network LLMs.", { prompt: z.string() }, handlers.localScout);
-  await server.connect(new StdioServerTransport());
+  const transport = new StdioServerTransport();
+  let closing = false;
+  const close = async (exitCode?: number): Promise<void> => {
+    if (closing) return;
+    closing = true;
+    await server.close().catch(() => undefined);
+    await transport.close().catch(() => undefined);
+    if (exitCode !== undefined) process.exit(exitCode);
+  };
+  process.stdin.on("close", () => {
+    void close();
+  });
+  process.once("SIGTERM", () => {
+    void close(0);
+  });
+  process.once("SIGINT", () => {
+    void close(0);
+  });
+  await server.connect(transport);
 }

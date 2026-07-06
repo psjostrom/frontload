@@ -24,12 +24,13 @@ describe("init output formatting", () => {
         {
           agent: "codex",
           writes: [
-            { path: path.join(home, ".codex/config.toml"), action: "updated" },
+            { path: path.join(repo, ".codex/config.toml"), action: "updated" },
             { path: path.join(home, ".codex/hooks.json"), action: "created" },
             { path: path.join(home, ".codex/skills/frontload"), action: "created" }
           ],
           notes: [
-            "Restart Codex after init completes; /mcp should show the frontload server.",
+            "Codex MCP config was written to project .codex/config.toml; hooks and the Frontload skill were written to your global Codex config.",
+            "Restart Codex after init completes; /mcp should show the frontload server for this repo.",
             "Open /hooks once to review and approve the Frontload command hooks."
           ]
         }
@@ -45,8 +46,10 @@ describe("init output formatting", () => {
     expect(output).toContain("[created] frontload.config.json");
     expect(output).toContain("[skipped] AGENTS.md");
     expect(output).toContain("| Codex setup |");
-    expect(output).toContain("[updated] ~/.codex/config.toml");
+    expect(output).toContain("[updated] .codex/config.toml");
     expect(output).toContain("[created] ~/.codex/hooks.json");
+    expect(output).toContain("project .codex/config.toml");
+    expect(output).toContain("global Codex config");
     expect(output).toContain("Next steps");
     expect(output).toContain("1. Restart Codex.");
     expect(output).toContain("Open /hooks to review and approve");
