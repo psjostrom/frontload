@@ -20,6 +20,10 @@ Restart Codex after init. Codex reads MCP servers from project `.codex/config.to
 for trusted projects, so each initialized repo can have its own Frontload MCP
 entry. Init also copies the Frontload skill to `~/.codex/skills/frontload`.
 
+Add `.codex/` to `.gitignore` unless your team intentionally wants to share
+project-local Codex config. Frontload pins the MCP server to an absolute repo
+path in that file.
+
 Init also merges Frontload command hooks into `~/.codex/hooks.json`:
 
 - `PreToolUse` rewrites supported broad or verbose Bash calls through bounded

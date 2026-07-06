@@ -34,7 +34,9 @@ If `frontload` is not already available on your `PATH`, `init` prompts before
 installing the package globally with npm. Restart your editor after init
 completes; MCP clients load server configuration at startup.
 
-Add `.frontload/` to your repository's `.gitignore`.
+Add `.frontload/` to your repository's `.gitignore`. If you use Codex, also
+ignore `.codex/` unless your team intentionally wants to share project-local
+Codex config; Frontload writes an absolute repo path there.
 
 Run `npx frontload init` separately in each repository. Frontload writes
 repo-local MCP config where the agent supports it, so initializing another repo

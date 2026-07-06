@@ -6,7 +6,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { describe, expect, it } from "vitest";
 import { execa } from "execa";
 import { budgetReport, readEvents } from "../../src/budget/events.js";
-import { searchIndexMeasured } from "../../src/dossier/dossier.js";
+import { searchResultsOutput } from "../../src/budget/output-bounds.js";
+import { compactRankedResults, searchIndexMeasured } from "../../src/dossier/dossier.js";
 import { createMcpHandlers } from "../../src/mcp/server.js";
 
 const fixture = path.resolve("fixtures/react-ts-app");
@@ -408,6 +409,7 @@ describe("e2e proof workflow", () => {
 
   it("keeps CLI search output under the configured tool output cap", async () => {
     const repo = writeNoisySearchRepo();
+    const query = "target reconnect signal";
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
       budgets: {
         maxToolOutputChars: 1600
@@ -416,12 +418,39 @@ describe("e2e proof workflow", () => {
     const cli = path.resolve("dist/src/cli/index.js");
 
     await execa(process.execPath, [cli, "index", "--repo", repo]);
-    const result = await execa(process.execPath, [cli, "search", "target reconnect signal", "--repo", repo, "--limit", "12"]);
+    const expectedBaseline = Buffer.byteLength(`${JSON.stringify({
+      summary: "Search results from index.",
+      results: compactRankedResults((await searchIndexMeasured(repo, query, 12)).unboundedResults)
+    }, null, 2)}\n`);
+    const result = await execa(process.execPath, [cli, "search", query, "--repo", repo, "--limit", "12"]);
     const data = JSON.parse(result.stdout);
+    const event = readEvents(repo).at(-1);
 
     expect(result.stdout.length).toBeLessThanOrEqual(1600);
     expect(data).toMatchObject({ summary: "Search results from index." });
     expect(data.truncated).toBe(true);
+    expect(event).toMatchObject({
+      source: "cli",
+      operation: "search",
+      baselineBytes: expectedBaseline
+    });
+  });
+
+  it("keeps CLI search output under the minimum configured tool output cap", async () => {
+    const repo = writeNoisySearchRepo();
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 64
+      }
+    }));
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    await execa(process.execPath, [cli, "index", "--repo", repo]);
+    const result = await execa(process.execPath, [cli, "search", "target reconnect signal", "--repo", repo, "--limit", "12"]);
+    const data = JSON.parse(result.stdout);
+
+    expect(result.stdout.length).toBeLessThanOrEqual(64);
+    expect(data).toMatchObject({ truncated: true });
   });
 
   it("keeps CLI read output under the configured tool output cap", async () => {
@@ -444,6 +473,24 @@ describe("e2e proof workflow", () => {
 
     expect(result.stdout.length).toBeLessThanOrEqual(1600);
     expect(data.excerpt).toContain("targetNeedle");
+  });
+
+  it("keeps CLI read output under the cap for a single oversized line", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-read-single-line-cap-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 64
+      }
+    }));
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "src/large.ts"), `export const value = "${"x".repeat(2000)} targetNeedle";\n`);
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    const result = await execa(process.execPath, [cli, "read", "src/large.ts", "--repo", repo, "--budget", "3500", "--query", "targetNeedle"]);
+    const data = JSON.parse(result.stdout);
+
+    expect(result.stdout.length).toBeLessThanOrEqual(64);
+    expect(data).toMatchObject({ truncated: true });
   });
 
   it("reports project Codex MCP health and legacy global conflicts in doctor", async () => {
@@ -479,6 +526,65 @@ describe("e2e proof workflow", () => {
       legacyGlobalConflict: true
     });
     expect(data.checks.codex.restartAdvice).toContain("Transport closed");
+  });
+
+  it("does not execute unmanaged Codex MCP commands during doctor", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-unmanaged-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-unmanaged-home-"));
+    const marker = path.join(repo, "executed.txt");
+    const unmanaged = path.join(repo, "not-frontload.sh");
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}");
+    writeShellScript(unmanaged, `#!/bin/sh\nprintf executed > ${JSON.stringify(marker)}\nexit 0\n`);
+    fs.mkdirSync(path.join(repo, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".codex/config.toml"), [
+      "[mcp_servers.frontload]",
+      `command = ${JSON.stringify(unmanaged)}`,
+      `args = ${JSON.stringify(["mcp", "--repo", repo])}`,
+      "enabled = true",
+      ""
+    ].join("\n"));
+
+    const result = await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "doctor", "--repo", repo, "--home", home]);
+    const data = JSON.parse(result.stdout);
+
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(data.checks.codex).toMatchObject({
+      configured: true,
+      usesInstalledCommand: false,
+      startsMcp: true,
+      repoMatches: true,
+      launches: false,
+      responds: false
+    });
+  });
+
+  it("treats a successful bounded policy probe as responsive without recording budget events", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-home-"));
+    const cli = path.resolve("dist/src/cli/index.js");
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: {
+        maxToolOutputChars: 64
+      }
+    }));
+    fs.mkdirSync(path.join(repo, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".codex/config.toml"), [
+      "[mcp_servers.frontload]",
+      `command = ${JSON.stringify(process.execPath)}`,
+      `args = ${JSON.stringify([cli, "mcp", "--repo", repo])}`,
+      "enabled = true",
+      ""
+    ].join("\n"));
+
+    const result = await execa(process.execPath, [cli, "doctor", "--repo", repo, "--home", home]);
+    const data = JSON.parse(result.stdout);
+
+    expect(data.checks.codex).toMatchObject({
+      configured: true,
+      launches: true,
+      responds: true
+    });
+    expect(readEvents(repo).filter((event) => event.operation === "policy")).toEqual([]);
   });
 
   it("creates project-local Codex MCP config from the built init command", async () => {
@@ -991,7 +1097,7 @@ describe("e2e proof workflow", () => {
     expect(Buffer.byteLength(indexResult.stdout)).toBe(events.find((event) => event.operation === "index")?.outputBytes);
     const unboundedSearch = await searchIndexMeasured(repo, ".", Number.MAX_SAFE_INTEGER);
     expect(events.find((event) => event.operation === "search")?.baselineBytes).toBe(
-      Buffer.byteLength(`${JSON.stringify(unboundedSearch.unboundedResults, null, 2)}\n`)
+      Buffer.byteLength(`${JSON.stringify(searchResultsOutput(compactRankedResults(unboundedSearch.unboundedResults)), null, 2)}\n`)
     );
     const rawDiff = await execa("git", ["diff", "--patch"], { cwd: repo, stripFinalNewline: false });
     expect(events.find((event) => event.operation === "read")).toMatchObject({

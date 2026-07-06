@@ -10,14 +10,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Command, Option } from "commander";
 import { appendEvent, budgetReport, outputSize } from "../budget/events.js";
+import { boundedOutput, cliSerializedOutput, cliVisibleChars, fitSearchOutput, searchResultsOutput } from "../budget/output-bounds.js";
 import { loadConfig } from "../config/config.js";
 import { readBudgeted } from "../commands/read.js";
 import { runSummary } from "../commands/run.js";
-import { compactRankedResults, generateDossier, searchIndexMeasured, type CompactRanked } from "../dossier/dossier.js";
+import { compactRankedResults, generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
-import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
@@ -33,7 +34,7 @@ type ResultMeasurement<T> = {
 };
 
 function serializeOutput(data: unknown): string {
-  return typeof data === "string" ? `${data}\n` : `${JSON.stringify(data, null, 2)}\n`;
+  return cliSerializedOutput(data);
 }
 
 async function measured<T>(
@@ -75,23 +76,6 @@ async function measured<T>(
 
 function print(data: unknown): void {
   process.stdout.write(serializeOutput(data));
-}
-
-function fitCliSearchData(maxOutputChars: number, compactResults: CompactRanked[]): unknown {
-  if (!compactResults.length) return { summary: "Search results from index.", results: [] };
-  let visible = compactResults;
-  let omittedResults = 0;
-  while (visible.length > 0) {
-    const data = {
-      summary: "Search results from index.",
-      results: visible,
-      ...(omittedResults ? { truncated: true, omittedResults } : {})
-    };
-    if (outputSize(data).chars <= maxOutputChars) return data;
-    omittedResults += 1;
-    visible = visible.slice(0, -1);
-  }
-  return { summary: "Search results from index.", results: [], truncated: true, omittedResults: compactResults.length };
 }
 
 function proofDisplayPath(repoRoot: string, filePath: string): string {
@@ -416,6 +400,14 @@ function doctorRepoArg(args: string[] | undefined): string | undefined {
   return undefined;
 }
 
+function cleanProcessEnv(extra: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...extra };
+}
+
 function emptyCodexCheck(configPath: string, configScope: CodexDogfoodCheck["configScope"], legacyGlobalConflict = false): CodexDogfoodCheck {
   return {
     configPath,
@@ -479,11 +471,32 @@ function readCodexConfigCheck(configPath: string, configScope: CodexDogfoodCheck
   }
 }
 
+function isNodeFrontloadMcpCommand(command: string | undefined, args: string[] | undefined): boolean {
+  const cliPath = args?.[0];
+  return command === process.execPath
+    && typeof cliPath === "string"
+    && path.resolve(cliPath) === path.join(packageRoot(), "dist/src/cli/index.js")
+    && args?.[1] === "mcp";
+}
+
+function canProbeCodexMcp(check: CodexDogfoodCheck): boolean {
+  if (!check.configured || !check.command || !check.args || !check.startsMcp || !check.enabledForUse || !check.repoMatches) return false;
+  if (check.command === "frontload" && check.args[0] === "mcp") return true;
+  return isNodeFrontloadMcpCommand(check.command, check.args);
+}
+
 async function probeCodexMcp(check: CodexDogfoodCheck): Promise<CodexDogfoodCheck> {
-  if (!check.configured || !check.command || !check.args || !check.startsMcp || !check.enabledForUse) return check;
+  if (!canProbeCodexMcp(check)) {
+    return check.configured && check.startsMcp && check.enabledForUse
+      ? { ...check, probeError: "Skipped MCP launch because the configured command is not a managed Frontload command for this repo." }
+      : check;
+  }
+  const command = check.command!;
+  const args = check.args!;
   const transport = new StdioClientTransport({
-    command: check.command,
-    args: check.args,
+    command,
+    args,
+    env: cleanProcessEnv({ FRONTLOAD_DOCTOR_PROBE: "1" }),
     stderr: "pipe"
   });
   const client = new Client({ name: "frontload-doctor", version: packageVersion });
@@ -494,11 +507,11 @@ async function probeCodexMcp(check: CodexDogfoodCheck): Promise<CodexDogfoodChec
     const response = await client.callTool({ name: "fl_policy", arguments: {} }, undefined, { timeout: 5000, maxTotalTimeout: 5000 });
     const content = response.content as Array<{ type: string; text?: string }>;
     const text = content.find((part) => part.type === "text")?.text;
-    const data = text ? JSON.parse(text) as { summary?: string } : {};
+    const data = text ? JSON.parse(text) as unknown : undefined;
     return {
       ...check,
       launches: true,
-      responds: data.summary === "Current Frontload policy.",
+      responds: typeof data === "object" && data !== null,
       restartAdvice: "If Codex tools still fail with Transport closed after this probe passes, restart Codex so it reloads the MCP process."
     };
   } catch (error) {
@@ -531,24 +544,24 @@ async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<Cod
   return probeCodexMcp(active);
 }
 
-async function dogfoodCheck(repoRoot: string, homeDir: string) {
+async function dogfoodCheck(repoRoot: string, homeDir: string, codex?: CodexDogfoodCheck) {
   const installedCommand = installedFrontloadCheck(repoRoot);
-  const codex = await codexDogfoodCheck(repoRoot, homeDir);
+  const activeCodex = codex ?? await codexDogfoodCheck(repoRoot, homeDir);
   return {
     ok: installedCommand.available
       && installedCommand.matchesCurrentVersion === true
       && installedCommand.matchesTargetPackage === true
       && installedCommand.regularInstall === true
-      && codex.configured
-      && codex.usesInstalledCommand
-      && codex.startsMcp
-      && codex.enabledForUse
-      && codex.repoIsAbsolute
-      && codex.repoMatches
-      && codex.responds,
+      && activeCodex.configured
+      && activeCodex.usesInstalledCommand
+      && activeCodex.startsMcp
+      && activeCodex.enabledForUse
+      && activeCodex.repoIsAbsolute
+      && activeCodex.repoMatches
+      && activeCodex.responds,
     currentVersion: packageVersion,
     installedCommand,
-    codex
+    codex: activeCodex
   };
 }
 
@@ -620,7 +633,7 @@ program.command("doctor")
     const repoRoot = resolveRepo(opts.repo);
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     const codex = await codexDogfoodCheck(repoRoot, homeDir);
-    const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir) : undefined;
+    const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir, codex) : undefined;
     const checks = {
       node: process.versions.node,
       repoRoot,
@@ -675,8 +688,8 @@ program.command("search").argument("<query>").option("--repo <repo>", "repositor
     { query, opts },
     () => searchIndexMeasured(repoRoot, query, Number(opts.limit)),
     {
-      output: (result) => fitCliSearchData(config.budgets.maxToolOutputChars, compactRankedResults(result.results)),
-      baseline: (result) => ({ bytes: outputSize(serializeOutput(result.unboundedResults)).bytes, kind: "unbounded-search-results" })
+      output: (result) => fitSearchOutput(config.budgets.maxToolOutputChars, compactRankedResults(result.results), cliVisibleChars),
+      baseline: (result) => ({ bytes: outputSize(serializeOutput(searchResultsOutput(compactRankedResults(result.unboundedResults)))).bytes, kind: "unbounded-search-results" })
     }
   );
   print(measuredResult.output);
@@ -705,7 +718,7 @@ program.command("read")
       { file, opts: readOptions },
       () => readBudgeted(repoRoot, file, readOptions),
       {
-        output: (result) => result,
+        output: (result) => boundedOutput("read", config.budgets.maxToolOutputChars, result, cliVisibleChars).output,
         baseline: (result) => ({ bytes: result.fileSize, kind: "full-file" })
       }
     );

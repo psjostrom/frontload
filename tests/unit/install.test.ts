@@ -392,6 +392,7 @@ describe("installer", () => {
 
     expect(result.project).toEqual([]);
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
+    expect(result.agents[0].notes[0]).toContain("legacy global ~/.codex/config.toml");
     expect(codexConfig).toContain("[mcp_servers.other]");
     expect(codexConfig).toContain('command = "frontload"');
     expect(codexConfig).toContain(`args = ["mcp", "--repo", "${configuredRepo}"]`);
@@ -403,6 +404,32 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(false);
     expect(fs.readFileSync(path.join(repo, "frontload.config.json"), "utf8")).toBe(JSON.stringify({ custom: true }));
     expect(fs.readFileSync(path.join(repo, "AGENTS.md"), "utf8")).toBe("custom agents\n");
+  });
+
+  it("refreshes existing project-local Codex configuration during upgrade", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-project-codex-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-project-codex-"));
+    const codexConfigFile = path.join(repo, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
+    fs.writeFileSync(codexConfigFile, [
+      "[mcp_servers.frontload]",
+      "command = \"old-frontload\"",
+      "args = [\"mcp\", \"--repo\", \".\"]",
+      "",
+      "[mcp_servers.other]",
+      "command = \"other\"",
+      ""
+    ].join("\n"));
+
+    const result = upgradeAll(repo, home);
+    const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
+
+    expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
+    expect(result.agents[0].notes[0]).toContain("project .codex/config.toml");
+    expect(codexConfig).toContain("[mcp_servers.other]");
+    expect(codexConfig).toContain('command = "frontload"');
+    expect(codexConfig).toContain(`args = ["mcp", "--repo", "${repo}"]`);
+    expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
   });
 
   it("refreshes legacy dot repo args to the current repo during upgrade", () => {

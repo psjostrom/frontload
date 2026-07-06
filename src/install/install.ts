@@ -472,10 +472,24 @@ export function initProject(repoRoot: string, force = false): WriteResult[] {
 function configureCodex(repoRoot: string, homeDir = os.homedir(), force = false): InstallResult {
   const configPath = mcpConfigAdapters.codex.projectPath(repoRoot);
   if (!configPath) throw new Error("Codex does not support project-local MCP config from init.");
-  return configureCodexAt(configPath, homeDir, buildMcpEntry(repoRoot), hookDefinitions.codex, force);
+  return configureCodexAt(configPath, homeDir, buildMcpEntry(repoRoot), hookDefinitions.codex, force, "project");
 }
 
-function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, definitions: HookDefinition[], force: boolean): InstallResult {
+function codexNotes(configScope: "project" | "legacy-global"): string[] {
+  const configNote = configScope === "project"
+    ? "Codex MCP config was written to project .codex/config.toml; hooks and the Frontload skill were written to your global Codex config."
+    : "Codex MCP config was refreshed in legacy global ~/.codex/config.toml; hooks and the Frontload skill were written to your global Codex config.";
+  const restartNote = configScope === "project"
+    ? "Restart Codex after init completes; /mcp should show the frontload server for this repo."
+    : "Restart Codex after upgrade completes; /mcp should show the frontload server.";
+  return [
+    configNote,
+    restartNote,
+    "Open /hooks once to review and approve the Frontload command hooks."
+  ];
+}
+
+function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, definitions: HookDefinition[], force: boolean, configScope: "project" | "legacy-global"): InstallResult {
   const writes = [
     mcpConfigAdapters.codex.write(configPath, entry, force)
   ];
@@ -486,11 +500,7 @@ function configureCodexAt(configPath: string, homeDir: string, entry: McpEntry, 
   return {
     agent: "codex",
     writes,
-    notes: [
-      "Codex MCP config was written to project .codex/config.toml; hooks and the Frontload skill were written to your global Codex config.",
-      "Restart Codex after init completes; /mcp should show the frontload server for this repo.",
-      "Open /hooks once to review and approve the Frontload command hooks."
-    ]
+    notes: codexNotes(configScope)
   };
 }
 
@@ -629,7 +639,8 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
       homeDir,
       upgradeMcpEntry("codex", codexProjectConfig, absRepo),
       upgradeHookDefinitions("codex", path.join(homeDir, ".codex/hooks.json")),
-      true
+      true,
+      "project"
     )));
   }
   const codexGlobalConfig = mcpConfigAdapters.codex.globalPath(homeDir);
@@ -639,7 +650,8 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
       homeDir,
       upgradeMcpEntry("codex", codexGlobalConfig, absRepo),
       upgradeHookDefinitions("codex", path.join(homeDir, ".codex/hooks.json")),
-      true
+      true,
+      "legacy-global"
     )));
   }
   const claudeProjectConfig = mcpConfigAdapters.claude.projectPath(absRepo);

@@ -25,6 +25,10 @@ into `~/.codex/hooks.json`.
 Restart Codex after init. Open `/hooks` once to review and approve the command
 hooks.
 
+Add `.codex/` to `.gitignore` unless your team intentionally wants to share
+project-local Codex config. Frontload pins the MCP server to an absolute repo
+path in that file.
+
 If `frontload` is not already installed globally, init prompts before running
 `npm install -g frontload`.
 
