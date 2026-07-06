@@ -353,6 +353,17 @@ Reports logged operations, exact measured baseline/output bytes, signed net
 savings, unmeasured operation counts, largest operations, and recent events.
 Token estimates use `chars / 4`; treat them as directional, not billing-grade.
 
+### `proof`
+
+```bash
+frontload proof --repo .
+```
+
+Generates local proof artifacts under `.frontload/proof/`, including the test
+report, MCP transcript placeholder, and raw-vs-summary comparison. These files
+are generated evidence and are ignored with the rest of `.frontload/`; keep
+tracked `proof/` files for stable, hand-authored reports only.
+
 ### `mcp`
 
 ```bash

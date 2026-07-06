@@ -76,6 +76,8 @@ full log is truly needed.
 - `skills/frontload/` - shared Frontload skill source
 - `tests/unit/`, `tests/e2e/` - Vitest test suites
 - `fixtures/react-ts-app/` - fixture repo used by e2e and proof commands
+- `proof/` - stable, hand-authored proof reports; generated proof artifacts stay
+  under ignored `.frontload/proof/`
 
 ## Testing
 

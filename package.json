@@ -24,7 +24,7 @@
     "test": "vitest run tests/unit",
     "test:watch": "vitest",
     "e2e": "vitest run tests/e2e",
-    "demo:fixture": "pnpm build && node dist/src/cli/index.js index --repo fixtures/react-ts-app && node dist/src/cli/index.js dossier \"Fix stale chart tooltip value after sensor reconnect\" --repo fixtures/react-ts-app --format markdown --budget 6000 > proof/sample-dossier.md && node dist/src/cli/index.js run --repo fixtures/react-ts-app --kind test -- pnpm test",
+    "demo:fixture": "pnpm build && node dist/src/cli/index.js index --repo fixtures/react-ts-app && node -e \"require('node:fs').mkdirSync('fixtures/react-ts-app/.frontload/proof',{recursive:true})\" && node dist/src/cli/index.js dossier \"Fix stale chart tooltip value after sensor reconnect\" --repo fixtures/react-ts-app --format markdown --budget 6000 > fixtures/react-ts-app/.frontload/proof/sample-dossier.md && node dist/src/cli/index.js run --repo fixtures/react-ts-app --kind test -- pnpm test",
     "proof": "pnpm build && pnpm test && pnpm e2e && pnpm demo:fixture && node dist/src/cli/index.js proof --repo fixtures/react-ts-app"
   },
   "dependencies": {
