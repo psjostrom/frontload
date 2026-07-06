@@ -611,22 +611,29 @@ function upgradeHookDefinitions(agent: AgentName, hooksFile: string): HookDefini
   return hookDefinitions[agent].filter((definition) => hasFrontloadHookForEvent(hooksFile, definition.event));
 }
 
+function upgradeNotes(agent: InstallResult): InstallResult {
+  return {
+    ...agent,
+    notes: agent.notes.map((note) => note.replaceAll("after init completes", "after upgrade completes"))
+  };
+}
+
 export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult {
   const absRepo = path.resolve(repoRoot);
   const agents: InstallResult[] = [];
   const codexConfig = mcpConfigAdapters.codex.globalPath(homeDir);
   if (hasConfiguredFrontload(mcpConfigAdapters.codex, codexConfig)) {
-    agents.push(configureCodexAt(
+    agents.push(upgradeNotes(configureCodexAt(
       codexConfig,
       homeDir,
       upgradeMcpEntry("codex", codexConfig, absRepo),
       upgradeHookDefinitions("codex", path.join(homeDir, ".codex/hooks.json")),
       true
-    ));
+    )));
   }
   const claudeProjectConfig = mcpConfigAdapters.claude.projectPath(absRepo);
   if (hasConfiguredFrontload(mcpConfigAdapters.claude, claudeProjectConfig)) {
-    agents.push(configureClaudeAt(
+    agents.push(upgradeNotes(configureClaudeAt(
       absRepo,
       homeDir,
       "project",
@@ -634,11 +641,11 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
       upgradeMcpEntry("claude", claudeProjectConfig, absRepo),
       upgradeHookDefinitions("claude", claudeSettingsPath(absRepo, homeDir, "project")),
       true
-    ));
+    )));
   }
   const claudeGlobalConfig = mcpConfigAdapters.claude.globalPath(homeDir);
   if (hasConfiguredFrontload(mcpConfigAdapters.claude, claudeGlobalConfig)) {
-    agents.push(configureClaudeAt(
+    agents.push(upgradeNotes(configureClaudeAt(
       absRepo,
       homeDir,
       "global",
@@ -646,7 +653,7 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
       upgradeMcpEntry("claude", claudeGlobalConfig, absRepo),
       upgradeHookDefinitions("claude", claudeSettingsPath(absRepo, homeDir, "global")),
       true
-    ));
+    )));
   }
   return {
     repoRoot: absRepo,
