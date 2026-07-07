@@ -137,6 +137,11 @@ function inferredAllowedCommands(repoRoot: string): string[] {
         commands.add("pnpm test");
         commands.add("yarn test");
       }
+      if (pkg.scripts?.e2e) {
+        commands.add("npm run e2e");
+        commands.add("pnpm e2e");
+        commands.add("yarn e2e");
+      }
       if (pkg.scripts?.lint) {
         commands.add("npm run lint");
         commands.add("pnpm lint");

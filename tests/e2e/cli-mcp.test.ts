@@ -378,7 +378,7 @@ describe("e2e proof workflow", () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-empty-search-"));
     fs.writeFileSync(path.join(repo, "sample.ts"), "export const presentNeedle = 1;\n");
 
-    const response = await createMcpHandlers(repo).search({ query: "missingNeedle", limit: 10 });
+    const response = await createMcpHandlers(repo).search({ query: "absentMarker", limit: 10 });
     const data = JSON.parse(response.content[0].text);
 
     expect(data).toMatchObject({
@@ -539,7 +539,7 @@ describe("e2e proof workflow", () => {
     fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}");
     fs.mkdirSync(path.join(repo, ".codex"), { recursive: true });
     fs.writeFileSync(path.join(repo, ".codex/config.toml"), [
-      "[mcp_servers.frontload]",
+      "[mcp_servers.frontload_doctor_codex_12345678]",
       `command = ${JSON.stringify(process.execPath)}`,
       `args = ${JSON.stringify([cli, "mcp", "--repo", repo])}`,
       "enabled = true",
@@ -558,6 +558,7 @@ describe("e2e proof workflow", () => {
 
     expect(data.checks.codex).toMatchObject({
       configured: true,
+      serverName: "frontload_doctor_codex_12345678",
       configScope: "project",
       repoMatches: true,
       launches: true,
@@ -637,7 +638,9 @@ describe("e2e proof workflow", () => {
       env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` }
     });
 
-    expect(fs.readFileSync(path.join(repo, ".codex/config.toml"), "utf8")).toContain(`args = ["mcp", "--repo", "${repo}"]`);
+    const config = fs.readFileSync(path.join(repo, ".codex/config.toml"), "utf8");
+    expect(config).toMatch(/^\[mcp_servers\.frontload_[^\]]+\]$/m);
+    expect(config).toContain(`args = ["mcp", "--repo", "${repo}"]`);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
   });
@@ -673,6 +676,35 @@ describe("e2e proof workflow", () => {
       baselineBytes: data.rawOutputBytes,
       baselineKind: "raw-command-output"
     });
+  });
+
+  it("preserves nested command passthrough flags after the run separator", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-run-passthrough-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      commands: {
+        allowed: ["node argv.js"]
+      }
+    }));
+    fs.writeFileSync(path.join(repo, "argv.js"), "console.log(JSON.stringify(process.argv.slice(2)))\n");
+
+    const result = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "run",
+      "--repo",
+      repo,
+      "--kind",
+      "test",
+      "--",
+      "node",
+      "argv.js",
+      "--",
+      "--runInBand"
+    ]);
+    const data = JSON.parse(result.stdout);
+
+    expect(data.command).toBe("node argv.js -- --runInBand");
+    expect(data.exitCode).toBe(0);
+    expect(data.summary).toContain('["--","--runInBand"]');
   });
 
   it("reports invalid read line options as CLI validation errors", async () => {

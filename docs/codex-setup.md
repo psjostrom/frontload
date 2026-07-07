@@ -11,10 +11,14 @@ If `frontload` is not already installed globally, init prompts before running
 `.codex/config.toml`:
 
 ```toml
-[mcp_servers.frontload]
+[mcp_servers.frontload_your_repo_a1b2c3d4]
 command = "frontload"
 args = ["mcp", "--repo", "/path/to/your/repo"]
 ```
+
+The table name is repo-specific. Frontload uses a stable hash of the repo path
+so concurrent Codex agents in different repos do not collide on one global
+`frontload` server name.
 
 Restart Codex after init. Codex reads MCP servers from project `.codex/config.toml`
 for trusted projects, so each initialized repo can have its own Frontload MCP

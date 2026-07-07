@@ -266,6 +266,7 @@ type CodexDogfoodCheck = {
   configPath: string;
   configScope: "project" | "global" | "none";
   configured: boolean;
+  serverName?: string;
   command?: string;
   args?: string[];
   enabled?: boolean;
@@ -381,6 +382,31 @@ function doctorTomlTable(text: string, tableName: string): string | undefined {
   return lines.slice(start, end).join("\n");
 }
 
+function doctorFrontloadServerName(tableName: string, block?: string): string | undefined {
+  const prefix = "mcp_servers.";
+  if (!tableName.startsWith(prefix)) return undefined;
+  const serverName = tableName.slice(prefix.length);
+  if (serverName.includes(".")) return undefined;
+  if (serverName === "frontload") return serverName;
+  if (!serverName.startsWith("frontload_") || !block) return undefined;
+  const command = doctorTomlJsonValue<string>(block, "command");
+  const args = doctorTomlJsonValue<string[]>(block, "args");
+  const managedFrontload = (command === "frontload" && args?.[0] === "mcp") || isNodeFrontloadMcpCommand(command, args);
+  return managedFrontload && doctorRepoArg(args) ? serverName : undefined;
+}
+
+function doctorCodexFrontloadTable(text: string): { serverName: string; block: string } | undefined {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  for (const line of lines) {
+    const match = line.trim().match(/^\[([^\]]+)\]$/);
+    if (!match) continue;
+    const block = doctorTomlTable(text, match[1]);
+    const serverName = doctorFrontloadServerName(match[1], block);
+    if (serverName && block) return { serverName, block };
+  }
+  return undefined;
+}
+
 function doctorTomlJsonValue<T>(block: string, key: string): T | undefined {
   const match = block.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, "m"));
   if (!match) return undefined;
@@ -429,8 +455,9 @@ function readCodexConfigCheck(configPath: string, configScope: CodexDogfoodCheck
     return emptyCodexCheck(configPath, configScope, legacyGlobalConflict);
   }
   try {
-    const block = doctorTomlTable(fs.readFileSync(configPath, "utf8"), "mcp_servers.frontload");
-    if (!block) return emptyCodexCheck(configPath, configScope, legacyGlobalConflict);
+    const table = doctorCodexFrontloadTable(fs.readFileSync(configPath, "utf8"));
+    if (!table) return emptyCodexCheck(configPath, configScope, legacyGlobalConflict);
+    const block = table.block;
     const command = doctorTomlJsonValue<string>(block, "command");
     const args = doctorTomlJsonValue<string[]>(block, "args");
     const enabled = doctorTomlJsonValue<boolean>(block, "enabled");
@@ -440,6 +467,7 @@ function readCodexConfigCheck(configPath: string, configScope: CodexDogfoodCheck
       configPath,
       configScope,
       configured: true,
+      serverName: table.serverName,
       command,
       args,
       enabled,
@@ -727,7 +755,7 @@ program.command("read")
 
 program.command("run").option("--repo <repo>", "repository root", ".").option("--kind <kind>", "generic").option("--allow-unconfigured").argument("[cmd...]", "command after --").allowUnknownOption(true).allowExcessArguments(true).action(async (cmdParts: string[], opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  const parts = cmdParts.includes("--") ? cmdParts.slice(cmdParts.indexOf("--") + 1) : cmdParts;
+  const parts = cmdParts;
   const measuredResult = await measured(
     repoRoot,
     "run",

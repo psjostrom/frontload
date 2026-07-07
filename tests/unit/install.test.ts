@@ -40,7 +40,7 @@ describe("installer", () => {
       path.relative(repo, path.join(home, ".codex/hooks.json")),
       path.relative(repo, path.join(home, ".codex/skills/frontload"))
     ]);
-    expect(codexConfig).toContain("[mcp_servers.frontload]");
+    expect(codexConfig).toMatch(/^\[mcp_servers\.frontload_[^\]]+\]$/m);
     expect(codexConfig).toContain('command = "frontload"');
     expect(codexConfig).toContain(`args = ["mcp", "--repo", "${repo}"]`);
     expect(JSON.parse(fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8")).hooks).toEqual({
@@ -94,6 +94,30 @@ describe("installer", () => {
     expect(configB).toContain(`args = ["mcp", "--repo", "${repoB}"]`);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
     expect(hooks.hooks.PreToolUse[0].hooks[0].command).toBe(hookDefinitions.codex[0].hook.command);
+  });
+
+  it("uses distinct Codex MCP server names for distinct project repos", () => {
+    const parentA = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-a-"));
+    const parentB = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-b-"));
+    const repoA = path.join(parentA, "app");
+    const repoB = path.join(parentB, "app");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-multi-"));
+    fs.mkdirSync(repoA);
+    fs.mkdirSync(repoB);
+
+    initAll(repoA, ["codex"], home);
+    initAll(repoB, ["codex"], home);
+
+    const configA = fs.readFileSync(path.join(repoA, ".codex/config.toml"), "utf8");
+    const configB = fs.readFileSync(path.join(repoB, ".codex/config.toml"), "utf8");
+    const serverA = configA.match(/^\[mcp_servers\.([^\]]+)\]$/m)?.[1];
+    const serverB = configB.match(/^\[mcp_servers\.([^\]]+)\]$/m)?.[1];
+
+    expect(serverA).toMatch(/^frontload_/);
+    expect(serverB).toMatch(/^frontload_/);
+    expect(serverA).not.toBe(serverB);
+    expect(configA).toContain(`args = ["mcp", "--repo", "${repoA}"]`);
+    expect(configB).toContain(`args = ["mcp", "--repo", "${repoB}"]`);
   });
 
   it("configures all supported agent adapters from init", () => {
@@ -251,6 +275,34 @@ describe("installer", () => {
     expect(codexConfig).toContain('command = "frontload"');
     expect(codexConfig).not.toContain("old-frontload");
     expect(codexConfig).not.toContain("[mcp_servers.frontload.env]");
+  });
+
+  it("preserves unrelated Codex frontload-prefixed servers", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-prefix-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-prefix-"));
+    const configFile = path.join(repo, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(configFile), { recursive: true });
+    fs.writeFileSync(configFile, [
+      "[mcp_servers.frontload_proxy]",
+      "command = \"proxy\"",
+      "args = [\"serve\"]",
+      "",
+      "[mcp_servers.frontload]",
+      "command = \"old-frontload\"",
+      "",
+      "[mcp_servers.other]",
+      "command = \"other\"",
+      ""
+    ].join("\n"));
+
+    initAll(repo, ["codex"], home);
+    const codexConfig = fs.readFileSync(configFile, "utf8");
+
+    expect(codexConfig).toContain("[mcp_servers.frontload_proxy]");
+    expect(codexConfig).toContain('command = "proxy"');
+    expect(codexConfig).toContain("[mcp_servers.other]");
+    expect(codexConfig).toContain('command = "frontload"');
+    expect(codexConfig).not.toContain("old-frontload");
   });
 
   it("preserves unrelated Codex hooks and replaces stale Frontload hooks", () => {
