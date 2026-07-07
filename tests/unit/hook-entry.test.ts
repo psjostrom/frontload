@@ -209,6 +209,31 @@ describe("hook entry adapters", () => {
     ]);
   });
 
+  it("invokes the configured Codex global hook command from the host project when cwd differs", async () => {
+    const repo = initializedRepo();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-outside-"));
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-bin-"));
+    const marker = writeFakeFrontload(binDir);
+    const env = {
+      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      CODEX_PROJECT_DIR: repo,
+      FRONTLOAD_HOOK_MARKER: marker
+    };
+
+    for (const definition of hookDefinitions.codex) {
+      await execa("sh", ["-c", definition.hook.command], {
+        cwd: outside,
+        env,
+        input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "pnpm test" }, tool_response: "output" })
+      });
+    }
+
+    expect(fs.readFileSync(marker, "utf8").split("\n").filter(Boolean)).toEqual([
+      "hook pre-tool-use --host codex",
+      "hook post-tool-use --host codex"
+    ]);
+  });
+
   it("finds an initialized repository from a nested working directory", async () => {
     const repo = initializedRepo();
     const nested = path.join(repo, "src/nested");
@@ -266,6 +291,25 @@ describe("hook entry adapters", () => {
 
       expect(codex.hookSpecificOutput.updatedInput.command).toContain(toolRepo);
       expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
+    } finally {
+      if (previousCodex === undefined) delete process.env.CODEX_PROJECT_DIR;
+      else process.env.CODEX_PROJECT_DIR = previousCodex;
+    }
+  });
+
+  it("stays inert when an explicit tool cwd is outside initialized repositories", async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-outside-tool-"));
+    const codexRepo = initializedRepo();
+    const previousCodex = process.env.CODEX_PROJECT_DIR;
+    process.env.CODEX_PROJECT_DIR = codexRepo;
+
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Bash",
+        tool_input: { command: "pnpm test", workdir: outside }
+      });
+
+      expect(await runPreToolUseHook("codex", payload)).toBeNull();
     } finally {
       if (previousCodex === undefined) delete process.env.CODEX_PROJECT_DIR;
       else process.env.CODEX_PROJECT_DIR = previousCodex;

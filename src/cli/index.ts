@@ -382,12 +382,17 @@ function doctorTomlTable(text: string, tableName: string): string | undefined {
   return lines.slice(start, end).join("\n");
 }
 
-function doctorFrontloadServerName(tableName: string): string | undefined {
+function doctorFrontloadServerName(tableName: string, block?: string): string | undefined {
   const prefix = "mcp_servers.";
   if (!tableName.startsWith(prefix)) return undefined;
   const serverName = tableName.slice(prefix.length);
   if (serverName.includes(".")) return undefined;
-  return serverName === "frontload" || serverName.startsWith("frontload_") ? serverName : undefined;
+  if (serverName === "frontload") return serverName;
+  if (!serverName.startsWith("frontload_") || !block) return undefined;
+  const command = doctorTomlJsonValue<string>(block, "command");
+  const args = doctorTomlJsonValue<string[]>(block, "args");
+  const managedFrontload = (command === "frontload" && args?.[0] === "mcp") || isNodeFrontloadMcpCommand(command, args);
+  return managedFrontload && doctorRepoArg(args) ? serverName : undefined;
 }
 
 function doctorCodexFrontloadTable(text: string): { serverName: string; block: string } | undefined {
@@ -395,10 +400,9 @@ function doctorCodexFrontloadTable(text: string): { serverName: string; block: s
   for (const line of lines) {
     const match = line.trim().match(/^\[([^\]]+)\]$/);
     if (!match) continue;
-    const serverName = doctorFrontloadServerName(match[1]);
-    if (!serverName) continue;
     const block = doctorTomlTable(text, match[1]);
-    if (block) return { serverName, block };
+    const serverName = doctorFrontloadServerName(match[1], block);
+    if (serverName && block) return { serverName, block };
   }
   return undefined;
 }

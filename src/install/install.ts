@@ -239,18 +239,37 @@ function removeTomlTable(text: string, tableName: string): { text: string; remov
   return { text: next, removed: true };
 }
 
-function isCodexFrontloadServerTable(tableName: string): boolean {
+function isCodexFrontloadServerTableName(tableName: string): boolean {
   const prefix = "mcp_servers.";
   if (!tableName.startsWith(prefix)) return false;
   const serverName = tableName.slice(prefix.length);
   return !serverName.includes(".") && (serverName === "frontload" || serverName.startsWith("frontload_"));
 }
 
+function tomlJsonValue<T>(block: string, key: string): T | undefined {
+  const match = block.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, "m"));
+  if (!match) return undefined;
+  try {
+    return JSON.parse(match[1]) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+function isManagedCodexFrontloadServerTable(text: string, tableName: string): boolean {
+  if (tableName === "mcp_servers.frontload") return true;
+  const block = tomlTableBlock(text, tableName);
+  if (!block) return false;
+  const command = tomlJsonValue<string>(block, "command");
+  const args = tomlJsonValue<string[]>(block, "args");
+  return command === "frontload" && repoArgFromArgs(args) !== undefined && args?.includes("mcp") === true;
+}
+
 function codexFrontloadServerTables(text: string): string[] {
   const tables = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
     const table = tomlTableName(line);
-    if (table && isCodexFrontloadServerTable(table)) tables.add(table);
+    if (table && isCodexFrontloadServerTableName(table) && isManagedCodexFrontloadServerTable(text, table)) tables.add(table);
   }
   return [...tables];
 }

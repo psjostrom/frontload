@@ -378,7 +378,7 @@ describe("e2e proof workflow", () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-empty-search-"));
     fs.writeFileSync(path.join(repo, "sample.ts"), "export const presentNeedle = 1;\n");
 
-    const response = await createMcpHandlers(repo).search({ query: "missingNeedle", limit: 10 });
+    const response = await createMcpHandlers(repo).search({ query: "absentMarker", limit: 10 });
     const data = JSON.parse(response.content[0].text);
 
     expect(data).toMatchObject({

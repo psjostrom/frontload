@@ -57,7 +57,9 @@ function taskTerms(task: string): string[] {
 
 function searchTerms(query: string): string[] {
   const trimmed = query.trim();
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(trimmed)) return [trimmed.toLowerCase()];
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(trimmed)) {
+    return Array.from(new Set([trimmed.toLowerCase(), ...taskTerms(trimmed)]));
+  }
   return taskTerms(query);
 }
 

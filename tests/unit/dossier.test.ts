@@ -77,6 +77,24 @@ describe("dossier", () => {
     expect(results[0]?.file.path).toBe("lib/byFeel.ts");
   });
 
+  it("matches snake case search terms to camelCase symbols", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-search-snake-camel-"));
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "src/readBudgeted.ts"), [
+      "export function readBudgeted() { return 'bounded'; }",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "src/unrelated.ts"), [
+      "export function readSomethingElse() { return 'other'; }",
+      ""
+    ].join("\n"));
+    await buildIndex(dir);
+
+    const results = await searchIndex(dir, "read_budgeted", 5);
+
+    expect(results[0]?.file.path).toBe("src/readBudgeted.ts");
+  });
+
   it("ranks camelCase domain files in task dossiers", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-dossier-camel-domain-"));
     fs.mkdirSync(path.join(dir, "lib"), { recursive: true });

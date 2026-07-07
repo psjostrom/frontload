@@ -27,9 +27,11 @@ function shellQuote(value: string): string {
 function startingDirectories(payload: Record<string, unknown>, host: HookHost): string[] {
   const input = payload.tool_input && typeof payload.tool_input === "object" && !Array.isArray(payload.tool_input) ? (payload.tool_input as Record<string, unknown>) : {};
   const hostProjectDir = host === "claude" ? process.env.CLAUDE_PROJECT_DIR : process.env.CODEX_PROJECT_DIR;
-  const toolCwds = [stringValue(input.workdir), stringValue(input.cwd), stringValue(payload.cwd)].filter((value): value is string => !!value);
-  const fallbackDirs = [toolCwds.length ? null : process.cwd(), stringValue(hostProjectDir)].filter((value): value is string => !!value);
-  return [...toolCwds, ...fallbackDirs].map((value) => path.resolve(value));
+  const explicitToolCwds = [stringValue(input.workdir), stringValue(input.cwd)].filter((value): value is string => !!value);
+  if (explicitToolCwds.length) return explicitToolCwds.map((value) => path.resolve(value));
+  const payloadCwd = stringValue(payload.cwd);
+  const fallbackDirs = [payloadCwd, payloadCwd ? null : process.cwd(), stringValue(hostProjectDir)].filter((value): value is string => !!value);
+  return fallbackDirs.map((value) => path.resolve(value));
 }
 
 function initializedRoot(start: string): string | null {
