@@ -4,6 +4,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { appendEvent, budgetReport, outputSize, outputText } from "../../src/budget/events.js";
+import { boundedOutput } from "../../src/budget/output-bounds.js";
 import { compareCost, gitDiffSummary } from "../../src/diff/diff.js";
 
 describe("diff and budget", () => {
@@ -27,6 +28,64 @@ describe("diff and budget", () => {
     const report = budgetReport(dir);
 
     expect(report.largest.map((event) => event.operation)).toEqual(["unicode", "ascii"]);
+  });
+
+  it("compacts oversized budget reports instead of withholding them", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-budget-compact-"));
+    for (let i = 0; i < 80; i += 1) {
+      appendEvent(dir, {
+        source: "mcp",
+        operation: "read",
+        inputChars: 20,
+        outputChars: 100,
+        outputBytes: 100,
+        baselineBytes: 1000,
+        baselineKind: "full-file",
+        durationMs: 1,
+        success: true
+      });
+    }
+    const report = budgetReport(dir);
+    const bounded = boundedOutput("budget", 8000, report).output as Record<string, unknown>;
+
+    expect(outputSize(report).chars).toBeGreaterThan(8000);
+    expect(outputSize(bounded).chars).toBeLessThanOrEqual(8000);
+    expect(bounded.summary).toBe(report.summary);
+    expect(bounded).toMatchObject({
+      truncated: true,
+      operation: "budget",
+      operations: 80,
+      measuredOperations: 80,
+      omittedEventDetails: 30,
+      byOperation: {
+        read: expect.objectContaining({ count: 80, measuredCount: 80 })
+      }
+    });
+    expect(bounded).not.toHaveProperty("largest");
+    expect(bounded).not.toHaveProperty("last20");
+  });
+
+  it("counts omitted budget operation groups when aggregate details are trimmed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-budget-compact-groups-"));
+    for (let i = 0; i < 40; i += 1) {
+      appendEvent(dir, {
+        source: "mcp",
+        operation: `operation-${i}`,
+        inputChars: 20,
+        outputChars: 100,
+        outputBytes: 100,
+        baselineBytes: 1000,
+        baselineKind: "full-file",
+        durationMs: 1,
+        success: true
+      });
+    }
+    const bounded = boundedOutput("budget", 1200, budgetReport(dir)).output as Record<string, unknown>;
+
+    expect(outputSize(bounded).chars).toBeLessThanOrEqual(1200);
+    expect(bounded.omittedOperationGroups).toEqual(expect.any(Number));
+    expect(bounded.omittedOperationGroups as number).toBeGreaterThan(0);
+    expect(bounded).not.toHaveProperty("omittedOperations");
   });
 
   it("exports output helpers", () => {

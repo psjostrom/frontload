@@ -28,7 +28,9 @@ Each tool returns structured JSON with a human-readable `summary`.
 ## Savings measurement
 
 `fl_budget_report` separates exact measured operations from unmeasured
-operations. Exact byte baselines are available for:
+operations. If the full report would exceed the configured tool output cap,
+Frontload keeps totals and as many per-operation aggregates as fit, then omits
+largest/recent event details. Exact byte baselines are available for:
 
 | Tool or hook | Baseline |
 | --- | --- |

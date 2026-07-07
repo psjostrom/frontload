@@ -386,6 +386,8 @@ describe("installer", () => {
     const skillFile = path.join(home, ".codex/skills/frontload/SKILL.md");
     fs.mkdirSync(path.dirname(skillFile), { recursive: true });
     fs.writeFileSync(skillFile, "old skill\n");
+    fs.mkdirSync(configuredRepo);
+    fs.writeFileSync(path.join(configuredRepo, "frontload.config.json"), "{}");
     fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
 
     const result = upgradeAll(repo, home);
@@ -405,6 +407,48 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(false);
     expect(fs.readFileSync(path.join(repo, "frontload.config.json"), "utf8")).toBe(JSON.stringify({ custom: true }));
     expect(fs.readFileSync(path.join(repo, "AGENTS.md"), "utf8")).toBe("custom agents\n");
+  });
+
+  it("repins stale absolute Codex repo args to the current repo during upgrade", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-stale-codex-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-stale-codex-"));
+    const codexConfigFile = path.join(home, ".codex/config.toml");
+    const staleRepo = path.join(os.tmpdir(), "frontload-missing-worktree");
+    fs.rmSync(staleRepo, { recursive: true, force: true });
+    fs.mkdirSync(path.join(staleRepo, ".frontload"), { recursive: true });
+    fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
+    fs.writeFileSync(codexConfigFile, [
+      "[mcp_servers.frontload]",
+      "command = \"frontload\"",
+      `args = ["mcp", "--repo", "${staleRepo}"]`,
+      ""
+    ].join("\n"));
+
+    upgradeAll(repo, home);
+    const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
+
+    expect(codexConfig).toContain(`args = ["mcp", "--repo", "${repo}"]`);
+    expect(codexConfig).not.toContain(staleRepo);
+  });
+
+  it("preserves existing absolute Codex repo args without Frontload marker files during upgrade", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-current-codex-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-plain-codex-"));
+    const codexConfigFile = path.join(home, ".codex/config.toml");
+    const plainRepo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-plain-target-"));
+    fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
+    fs.writeFileSync(codexConfigFile, [
+      "[mcp_servers.frontload]",
+      "command = \"frontload\"",
+      `args = ["mcp", "--repo", "${plainRepo}"]`,
+      ""
+    ].join("\n"));
+
+    upgradeAll(repo, home);
+    const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
+
+    expect(codexConfig).toContain(`args = ["mcp", "--repo", "${plainRepo}"]`);
+    expect(codexConfig).not.toContain(`args = ["mcp", "--repo", "${repo}"]`);
   });
 
   it("refreshes existing project-local Codex configuration during upgrade", () => {
@@ -499,6 +543,29 @@ describe("installer", () => {
     expect(globalConfig.mcpServers.frontload.args).toEqual(["mcp", "--repo", repo]);
   });
 
+  it("repins stale absolute Claude repo args to the current repo during upgrade", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-stale-claude-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-stale-claude-"));
+    const staleRepo = path.join(os.tmpdir(), "frontload-missing-claude-worktree");
+    fs.rmSync(staleRepo, { recursive: true, force: true });
+    fs.mkdirSync(path.join(staleRepo, ".frontload"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({
+      mcpServers: {
+        frontload: {
+          type: "stdio",
+          command: "frontload",
+          args: ["mcp", "--repo", staleRepo]
+        }
+      }
+    }, null, 2));
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+
+    upgradeAll(repo, home);
+    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+
+    expect(claudeConfig.mcpServers.frontload.args).toEqual(["mcp", "--repo", repo]);
+  });
+
   it("upgrades existing Claude project configuration without creating new project scaffolding", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-claude-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-claude-"));
@@ -543,6 +610,8 @@ describe("installer", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-claude-global-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-claude-global-"));
     const configuredRepo = path.join(repo, "configured-global-repo");
+    fs.mkdirSync(configuredRepo);
+    fs.writeFileSync(path.join(configuredRepo, "frontload.config.json"), "{}");
     fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({
       mcpServers: {
         frontload: {
