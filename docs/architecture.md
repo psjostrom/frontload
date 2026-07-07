@@ -15,4 +15,6 @@ The workflow has four local parts:
 - MCP server: exposes the same capabilities to supported agents over stdio.
 
 Command logs stay under `.frontload/logs/`. Budget and event metadata stay in
-`.frontload/events.jsonl`.
+`.frontload/events.jsonl`. When Frontload creates generated state in a Git
+repository, it adds `.frontload/` to the repository's local `.git/info/exclude`
+so generated state does not dirty `git status`.

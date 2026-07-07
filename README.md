@@ -34,9 +34,14 @@ If `frontload` is not already available on your `PATH`, `init` prompts before
 installing the package globally with npm. Restart your editor after init
 completes; MCP clients load server configuration at startup.
 
-Add `.frontload/` to your repository's `.gitignore`. If you use Codex, also
-ignore `.codex/` unless your team intentionally wants to share project-local
-Codex config; Frontload writes an absolute repo path there.
+Frontload stores repo-local state under `.frontload/` and adds `.frontload/` to
+the repository's local `.git/info/exclude` when it writes generated state. You
+can still add `.frontload/` to shared `.gitignore` rules if your team prefers
+that convention. `frontload init` prints this local-exclude behavior, and
+`frontload doctor` reports whether the local exclude rule is present. If you use
+Codex, also ignore `.codex/` unless your team
+intentionally wants to share project-local Codex config; Frontload writes an
+absolute repo path there.
 
 Run `npx frontload init` separately in each repository. Frontload writes
 repo-local MCP config where the agent supports it, so initializing another repo
@@ -152,12 +157,19 @@ project commands from `package.json`, Gradle metadata, and `Cargo.toml`. Use
 
 ```bash
 frontload diff --repo .
+frontload diff --repo . --tracked-only
 frontload budget --repo .
 frontload compare-cost --repo . --base HEAD~1 --head HEAD
 ```
 
-`frontload diff` summarizes changed files without dumping the full patch.
-`frontload budget` reports measured savings for logged operations.
+`frontload diff` summarizes changed files without dumping the full patch. By
+default it includes untracked files in the file list and notes that their
+content is omitted from the diff body. Use `--tracked-only` for the old
+tracked-file-only behavior.
+
+`frontload budget` reports measured savings for logged operations. Small outputs
+can show negative savings when the structured wrapper is larger than the raw
+baseline; the report calls that out as normal metadata overhead.
 `frontload compare-cost` compares logged Frontload output against raw changed
 files and patch baselines for a git range.
 
@@ -276,6 +288,8 @@ frontload doctor --repo . --dogfood
 
 Checks the local environment, Frontload state directory, active Codex MCP config,
 and whether the configured MCP command can launch and answer a health request.
+It also reports whether generated `.frontload/` state is ignored locally through
+`.git/info/exclude`.
 Add `--dogfood` to fail when the active Codex setup is not using the regular
 installed `frontload` command for the requested repo. `--home <dir>` points
 doctor at an alternate home directory for agent configuration checks.
@@ -333,10 +347,13 @@ Runs a configured or discovered command and summarizes output. Kinds are
 ```bash
 frontload diff --repo .
 frontload diff --repo . --staged
+frontload diff --repo . --tracked-only
 ```
 
 Summarizes changed files, categories, and risky changes without dumping the full
-patch.
+patch. Unstaged summaries include untracked files by default and note that their
+content is omitted from the diff body. Use `--tracked-only` to omit untracked
+files.
 
 ### `compare-cost`
 
@@ -367,8 +384,9 @@ frontload proof --repo .
 
 Generates local proof artifacts under `.frontload/proof/`, including the test
 report, MCP transcript placeholder, and raw-vs-summary comparison. These files
-are generated evidence and are ignored with the rest of `.frontload/`; keep
-tracked `proof/` files for stable, hand-authored reports only.
+are generated evidence and follow the same local exclude behavior as the rest of
+`.frontload/`; keep tracked `proof/` files for stable, hand-authored reports
+only.
 
 ### `mcp`
 
@@ -493,6 +511,7 @@ Frontload is local-first:
 - no source upload
 - local JSON/JSONL state only
 - command logs stay in `.frontload/logs/`
+- generated `.frontload/` state is added to local Git exclude rules when written
 - common token, password, secret, and API key patterns are redacted from
   budgeted reads and command summaries
 

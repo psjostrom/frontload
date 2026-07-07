@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
+import { ensureStateDir } from "../utils/path.js";
 
 export type AgentName = "codex" | "claude";
 export type ConfigScope = "project" | "global";
@@ -102,6 +103,13 @@ function ensureDir(target: string): WriteResult {
   if (fs.existsSync(target)) return { path: target, action: "skipped" };
   fs.mkdirSync(target, { recursive: true });
   return { path: target, action: "created" };
+}
+
+function ensureFrontloadStateDir(repoRoot: string): WriteResult {
+  const target = path.join(repoRoot, ".frontload");
+  const existed = fs.existsSync(target);
+  ensureStateDir(repoRoot);
+  return { path: target, action: existed ? "skipped" : "created" };
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -528,7 +536,7 @@ export function initProject(repoRoot: string, force = false): WriteResult[] {
   const absRepo = path.resolve(repoRoot);
   const writes: WriteResult[] = [
     copyFile(path.join(root, "frontload.config.example.json"), path.join(absRepo, "frontload.config.json"), force),
-    ensureDir(path.join(absRepo, ".frontload"))
+    ensureFrontloadStateDir(absRepo)
   ];
   return writes;
 }

@@ -995,10 +995,16 @@ describe("e2e proof workflow", () => {
 
   it("keeps plain doctor independent from dogfood validation", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-plain-"));
+    await execa("git", ["init"], { cwd: repo });
     const result = await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "doctor", "--repo", repo]);
     const data = JSON.parse(result.stdout);
 
     expect(data.summary).toBe("doctor completed");
+    expect(data.checks.stateExclude).toMatchObject({
+      ignored: true,
+      mechanism: ".git/info/exclude",
+      pattern: ".frontload/"
+    });
     expect(data.checks.dogfood).toBeUndefined();
   });
 

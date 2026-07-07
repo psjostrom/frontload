@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import { execa } from "execa";
 import { budgetReport } from "../budget/events.js";
@@ -6,25 +8,81 @@ import { capText } from "../utils/text.js";
 
 export { fileCategory };
 
-export async function gitDiffSummary(repoRoot: string, staged = false): Promise<{ summary: string; changedFiles: Array<{ path: string; added: number; removed: number; category: string; risky: boolean }>; riskyChanges: string[]; truncated: boolean; rawDiffBytes: number }> {
-  const args = ["diff", "--numstat", ...(staged ? ["--staged"] : [])];
-  const [num, patch] = await Promise.all([
+export type GitDiffOptions = {
+  staged?: boolean;
+  trackedOnly?: boolean;
+};
+
+export type DiffChangedFile = {
+  path: string;
+  added: number;
+  removed: number;
+  category: string;
+  risky: boolean;
+  status: "tracked" | "untracked";
+  bytes?: number;
+};
+
+function normalizeDiffOptions(options: boolean | GitDiffOptions = false): Required<GitDiffOptions> {
+  return typeof options === "boolean"
+    ? { staged: options, trackedOnly: false }
+    : { staged: options.staged ?? false, trackedOnly: options.trackedOnly ?? false };
+}
+
+function riskyPath(file: string, category: string): boolean {
+  return category === "lockfile" || /package\.json|auth|security|secret|env/.test(file);
+}
+
+function countTextLines(text: string): number {
+  if (!text) return 0;
+  const lines = text.split(/\r\n|\r|\n/).length;
+  return text.endsWith("\n") || text.endsWith("\r") ? lines - 1 : lines;
+}
+
+async function untrackedFiles(repoRoot: string): Promise<DiffChangedFile[]> {
+  const result = await execa("git", ["ls-files", "--others", "--exclude-standard"], { cwd: repoRoot, reject: false });
+  const files = result.stdout.split(/\r?\n/).filter(Boolean).sort();
+  return files.map((file) => {
+    const abs = path.join(repoRoot, file);
+    const text = fs.readFileSync(abs, "utf8");
+    const bytes = Buffer.byteLength(text);
+    const category = fileCategory(file);
+    return {
+      path: file,
+      added: countTextLines(text),
+      removed: 0,
+      category,
+      risky: riskyPath(file, category),
+      status: "untracked",
+      bytes
+    };
+  });
+}
+
+export async function gitDiffSummary(repoRoot: string, options: boolean | GitDiffOptions = false): Promise<{ summary: string; changedFiles: DiffChangedFile[]; riskyChanges: string[]; truncated: boolean; rawDiffBytes: number }> {
+  const normalized = normalizeDiffOptions(options);
+  const args = ["diff", "--numstat", ...(normalized.staged ? ["--staged"] : [])];
+  const [num, patch, untracked] = await Promise.all([
     execa("git", args, { cwd: repoRoot, reject: false }),
-    countGitPatchBytes(repoRoot, staged)
+    countGitPatchBytes(repoRoot, normalized.staged),
+    normalized.staged || normalized.trackedOnly ? Promise.resolve([]) : untrackedFiles(repoRoot)
   ]);
-  const changedFiles = num.stdout
+  const trackedFiles: DiffChangedFile[] = num.stdout
     .split(/\r?\n/)
     .filter(Boolean)
-    .map((line) => {
-      const [a, r, file] = line.split(/\s+/);
+    .map((line): DiffChangedFile => {
+      const [a, r, file] = line.split(/\t/);
       const cat = fileCategory(file);
-      const risky = cat === "lockfile" || /package\.json|auth|security|secret|env/.test(file);
-      return { path: file, added: Number(a) || 0, removed: Number(r) || 0, category: cat, risky };
+      const risky = riskyPath(file, cat);
+      return { path: file, added: Number(a) || 0, removed: Number(r) || 0, category: cat, risky, status: "tracked" as const };
     });
+  const changedFiles = [...trackedFiles, ...untracked];
   const riskyChanges = changedFiles.filter((f) => f.risky).map((f) => f.path);
-  const names = changedFiles.map((f) => `- ${f.path}: +${f.added}/-${f.removed}, ${f.category}${f.risky ? ", risky" : ""}`).join("\n");
-  const capped = capText(`Changed files: ${changedFiles.length}\n${names || "No diff."}\n\nRisky changes:\n${riskyChanges.map((r) => `- ${r}`).join("\n") || "- none"}`, 8000);
-  return { summary: capped.text, changedFiles, riskyChanges, truncated: capped.truncated, rawDiffBytes: patch };
+  const names = changedFiles.map((f) => `- ${f.path}: +${f.added}/-${f.removed}, ${f.category}${f.status === "untracked" ? ", untracked" : ""}${f.bytes !== undefined ? `, ${f.bytes} bytes` : ""}${f.risky ? ", risky" : ""}`).join("\n");
+  const omitted = untracked.length ? `\n\n${untracked.length} untracked ${untracked.length === 1 ? "file" : "files"} omitted from diff body.` : "";
+  const capped = capText(`Changed files: ${changedFiles.length}\n${names || "No diff."}${omitted}\n\nRisky changes:\n${riskyChanges.map((r) => `- ${r}`).join("\n") || "- none"}`, 8000);
+  const rawDiffBytes = patch + untracked.reduce((sum, file) => sum + (file.bytes ?? 0), 0);
+  return { summary: capped.text, changedFiles, riskyChanges, truncated: capped.truncated, rawDiffBytes };
 }
 
 async function countGitPatchBytes(repoRoot: string, staged = false): Promise<number> {

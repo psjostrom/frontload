@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { hookDefinitions } from "../../src/hooks/definitions.js";
 import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
@@ -25,6 +26,15 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(repo, "AGENTS.md"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(true);
     expect(fs.existsSync(path.join(repo, "codex/config.toml"))).toBe(false);
+  });
+
+  it("adds generated state to local git exclude during init", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-git-"));
+    await execa("git", ["init"], { cwd: repo });
+
+    initProject(repo);
+
+    expect(fs.readFileSync(path.join(repo, ".git/info/exclude"), "utf8")).toContain(".frontload/");
   });
 
   it("configures Codex MCP from init", () => {

@@ -61,6 +61,13 @@ function projectLines(result: InitOutput): string[] {
   ];
 }
 
+function generatedStateLines(): string[] {
+  return [
+    "  Generated state is written to .frontload/ and ignored locally via .git/info/exclude.",
+    "  Add .frontload/ to shared .gitignore rules only if your team wants that convention."
+  ];
+}
+
 function agentTitle(agent: InstallResult): string {
   return `${agent.agent[0].toUpperCase()}${agent.agent.slice(1)} setup`;
 }
@@ -149,6 +156,7 @@ export function formatInitOutput(result: InitOutput): string {
   lines.push(...box("Global command", globalInstallLines(result.globalInstall)), "");
 
   if (result.repoRoot || result.project) {
+    lines.push(...box("Generated state", generatedStateLines()), "");
     lines.push(...box("Project files", projectLines(result)), "");
   }
 

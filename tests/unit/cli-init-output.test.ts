@@ -41,6 +41,8 @@ describe("init output formatting", () => {
     expect(output).toContain("+----------------+");
     expect(output).toContain("| Global command |");
     expect(output).toContain("[installed] npm install -g frontload");
+    expect(output).toContain("| Generated state |");
+    expect(output).toContain("Generated state is written to .frontload/ and ignored locally via .git/info/exclude.");
     expect(output).toContain("| Project files |");
     expect(output).toContain(`Repo: ${repo}`);
     expect(output).toContain("[created] frontload.config.json");

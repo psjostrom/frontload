@@ -3,7 +3,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { FrontloadConfig, loadConfig } from "../config/config.js";
 import { CommandSummary, Finding } from "../types.js";
-import { nowStamp, stateDir } from "../utils/path.js";
+import { ensureStateDir, nowStamp } from "../utils/path.js";
 import { capText, redactSecrets } from "../utils/text.js";
 
 function pushUnique(findings: Finding[], finding: Finding): void {
@@ -180,14 +180,15 @@ function isAllowedWithDiscovery(repoRoot: string, command: string, config: Front
   return isAllowed(command, discovered);
 }
 
-export async function runSummary(repoRoot: string, kind: CommandSummary["kind"], commandParts: string[], allowUnconfigured = false, config = loadConfig(repoRoot)): Promise<CommandSummary> {
+export async function runSummary(repoRoot: string, kind: CommandSummary["kind"] | undefined, commandParts: string[], allowUnconfigured = false, config = loadConfig(repoRoot)): Promise<CommandSummary> {
+  const safeKind = kind ?? "generic";
   const command = commandParts.join(" ");
   if (!allowUnconfigured && !isAllowedWithDiscovery(repoRoot, command, config)) {
     throw new Error(`Command is not allowed by frontload.config.json: ${command}`);
   }
-  const logDir = path.join(stateDir(repoRoot), "logs");
+  const logDir = path.join(ensureStateDir(repoRoot), "logs");
   fs.mkdirSync(logDir, { recursive: true });
-  const fullLogPath = path.join(logDir, `${nowStamp()}-${kind}.log`);
+  const fullLogPath = path.join(logDir, `${nowStamp()}-${safeKind}.log`);
   const start = Date.now();
   let exitCode: number | null = 0;
   let signal: string | null = null;
@@ -233,7 +234,7 @@ export async function runSummary(repoRoot: string, kind: CommandSummary["kind"],
   const targetChars = rawOutputBytes > 0 ? Math.max(1000, Math.floor(rawOutputBytes * 0.15)) : config.budgets.maxToolOutputChars - 1;
   const capped = capText(readable, Math.min(config.budgets.maxToolOutputChars - 1, targetChars));
   return {
-    kind,
+    kind: safeKind,
     command,
     exitCode,
     signal,

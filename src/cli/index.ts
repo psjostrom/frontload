@@ -22,7 +22,7 @@ import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, i
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
-import { resolveRepo, stateDir } from "../utils/path.js";
+import { ensureStateDir, resolveRepo, stateDir, stateExcludeStatus } from "../utils/path.js";
 import { packageVersion, packageVersionFrom } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
 import { formatInitOutput, formatUpgradeOutput } from "./init-output.js";
@@ -667,10 +667,10 @@ program.command("doctor")
       repoRoot,
       config: !!loadConfig(repoRoot),
       writableState: (() => {
-        fs.mkdirSync(stateDir(repoRoot), { recursive: true });
-        fs.writeFileSync(path.join(stateDir(repoRoot), ".doctor"), "ok");
+        fs.writeFileSync(path.join(ensureStateDir(repoRoot), ".doctor"), "ok");
         return true;
       })(),
+      stateExclude: stateExcludeStatus(repoRoot),
       mcpServer: true,
       codex,
       platform: os.platform(),
@@ -769,13 +769,13 @@ program.command("run").option("--repo <repo>", "repository root", ".").option("-
   print(measuredResult.output);
 });
 
-program.command("diff").option("--repo <repo>", "repository root", ".").option("--staged").action(async (opts) => {
+program.command("diff").option("--repo <repo>", "repository root", ".").option("--staged").option("--tracked-only", "omit untracked files").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
   const measuredResult = await measured(
     repoRoot,
     "diff",
     opts,
-    () => gitDiffSummary(repoRoot, !!opts.staged),
+    () => gitDiffSummary(repoRoot, { staged: !!opts.staged, trackedOnly: !!opts.trackedOnly }),
     {
       output: (result) => result,
       baseline: (result) => ({ bytes: result.rawDiffBytes, kind: "raw-diff" })

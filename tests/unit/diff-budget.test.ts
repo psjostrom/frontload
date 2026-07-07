@@ -140,6 +140,7 @@ describe("diff and budget", () => {
     expect(report.netSavedBytes).toBe(-10);
     expect(report.estimatedTokensSaved).toBe(-2);
     expect(report.summary).toContain("used extra bytes");
+    expect(report.summary).toContain("This can be normal metadata overhead for small outputs.");
   });
 
   it("counts unmeasured operations separately", () => {
@@ -197,6 +198,53 @@ describe("diff and budget", () => {
 
     expect(summary.rawDiffBytes).toBe(Buffer.byteLength(actual.stdout));
     expect(summary.rawDiffBytes).toBeGreaterThan(0);
+  });
+
+  it("includes untracked files in unstaged diff summaries", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-diff-untracked-"));
+    await execa("git", ["init"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "existing.ts"), "export const a = 1;\n");
+    await execa("git", ["add", "."], { cwd: dir });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: dir,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    fs.appendFileSync(path.join(dir, "existing.ts"), "export const b = 2;\n");
+    fs.mkdirSync(path.join(dir, "new"));
+    fs.writeFileSync(path.join(dir, "new", "feature.ts"), "export const feature = true;\n");
+    fs.writeFileSync(path.join(dir, "new", "feature.test.ts"), "test('feature', () => {});\n");
+
+    const summary = await gitDiffSummary(dir);
+
+    expect(summary.changedFiles.map((file) => file.path)).toEqual(["existing.ts", "new/feature.test.ts", "new/feature.ts"]);
+    expect(summary.changedFiles.find((file) => file.path === "new/feature.ts")).toMatchObject({
+      status: "untracked",
+      category: "source",
+      added: 1,
+      removed: 0,
+      risky: false
+    });
+    expect(summary.summary).toContain("new/feature.ts: +1/-0, source, untracked");
+    expect(summary.summary).toContain("2 untracked files omitted from diff body.");
+    expect(summary.rawDiffBytes).toBeGreaterThan(0);
+  });
+
+  it("can preserve tracked-only diff summaries", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-diff-tracked-only-"));
+    await execa("git", ["init"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "existing.ts"), "export const a = 1;\n");
+    await execa("git", ["add", "."], { cwd: dir });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: dir,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    fs.appendFileSync(path.join(dir, "existing.ts"), "export const b = 2;\n");
+    fs.writeFileSync(path.join(dir, "new.ts"), "export const ignored = true;\n");
+
+    const summary = await gitDiffSummary(dir, { trackedOnly: true });
+
+    expect(summary.changedFiles.map((file) => file.path)).toEqual(["existing.ts"]);
+    expect(summary.summary).not.toContain("untracked");
   });
 
   it("compares changed-file and patch baselines against logged budget", async () => {

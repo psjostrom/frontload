@@ -5,7 +5,7 @@ import fg from "fast-glob";
 import { Project, SyntaxKind } from "ts-morph";
 import { FrontloadConfig, loadConfig } from "../config/config.js";
 import { DependencyEdge, IndexedFile, RepoIndex } from "../types.js";
-import { rel, stateDir } from "../utils/path.js";
+import { ensureStateDir, rel, stateDir } from "../utils/path.js";
 import { words } from "../utils/text.js";
 
 const codeExts = new Set([".ts", ".tsx", ".js", ".jsx"]);
@@ -163,8 +163,7 @@ function writeIndex(repoRoot: string, files: IndexedFile[], ignoredCount: number
     edges: buildEdges(files),
     stats: { fileCount: files.length, indexedBytes: files.reduce((sum, file) => sum + file.size, 0), ignoredCount }
   };
-  fs.mkdirSync(stateDir(repoRoot), { recursive: true });
-  const out = path.join(stateDir(repoRoot), "index.json");
+  const out = path.join(ensureStateDir(repoRoot), "index.json");
   const tmp = `${out}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(index, null, 2));
   fs.renameSync(tmp, out);
