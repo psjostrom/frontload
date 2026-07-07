@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { describe, expect, it } from "vitest";
 import { execa } from "execa";
-import { budgetReport, readEvents } from "../../src/budget/events.js";
+import { appendEvent, budgetReport, readEvents } from "../../src/budget/events.js";
 import { searchResultsOutput } from "../../src/budget/output-bounds.js";
 import { compactRankedResults, searchIndexMeasured } from "../../src/dossier/dossier.js";
 import { createMcpHandlers } from "../../src/mcp/server.js";
@@ -1159,6 +1159,41 @@ describe("e2e proof workflow", () => {
     expect(report.measuredOperations).toBe(4);
     expect(report.unmeasuredOperations).toBe(1);
     expect(report.summary).toMatch(/saved|used extra bytes/);
+  });
+
+  it("compacts oversized CLI budget reports under the configured tool cap", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-budget-cli-"));
+    fs.mkdirSync(path.join(repo, ".frontload"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: { maxToolOutputChars: 1200 }
+    }));
+    for (let i = 0; i < 80; i += 1) {
+      appendEvent(repo, {
+        source: "mcp",
+        operation: "read",
+        inputChars: 20,
+        outputChars: 100,
+        outputBytes: 100,
+        baselineBytes: 1000,
+        baselineKind: "full-file",
+        durationMs: 1,
+        success: true
+      });
+    }
+
+    const result = await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "budget", "--repo", repo]);
+    const data = JSON.parse(result.stdout);
+
+    expect(Buffer.byteLength(`${result.stdout}\n`)).toBeLessThanOrEqual(1200);
+    expect(data).toMatchObject({
+      truncated: true,
+      operation: "budget",
+      operations: 80,
+      measuredOperations: 80,
+      omittedEventDetails: 30
+    });
+    expect(data.largest).toBeUndefined();
+    expect(data.last20).toBeUndefined();
   });
 
   it("measures local scout against uncapped local output", async () => {

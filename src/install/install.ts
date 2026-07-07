@@ -605,9 +605,26 @@ function existingClaudeRepoArg(configPath: string): string | undefined {
   return repoArgFromArgs(frontload.args);
 }
 
+function shouldRepinAbsoluteRepo(repo: string): boolean {
+  let entries: string[];
+  try {
+    const stat = fs.statSync(repo);
+    if (!stat.isDirectory()) return true;
+    entries = fs.readdirSync(repo);
+  } catch {
+    return true;
+  }
+  const meaningfulEntries = entries.filter((entry) => entry !== ".DS_Store");
+  return meaningfulEntries.length === 1 && meaningfulEntries[0] === ".frontload";
+}
+
 function upgradeMcpEntry(agent: AgentName, configPath: string, repoRoot: string): McpEntry {
   const repo = agent === "codex" ? existingCodexRepoArg(configPath) : existingClaudeRepoArg(configPath);
-  const pinnedRepo = !repo || repo === "." ? repoRoot : path.isAbsolute(repo) ? repo : path.resolve(repoRoot, repo);
+  const pinnedRepo = !repo || repo === "." || (path.isAbsolute(repo) && shouldRepinAbsoluteRepo(repo))
+    ? repoRoot
+    : path.isAbsolute(repo)
+      ? repo
+      : path.resolve(repoRoot, repo);
   return buildMcpEntry(pinnedRepo);
 }
 

@@ -762,7 +762,11 @@ program.command("compare-cost").option("--repo <repo>", "repository root", ".").
   print(measuredResult.output);
 });
 
-program.command("budget").option("--repo <repo>", "repository root", ".").action((opts) => print(budgetReport(resolveRepo(opts.repo))));
+program.command("budget").option("--repo <repo>", "repository root", ".").action((opts) => {
+  const repoRoot = resolveRepo(opts.repo);
+  const config = loadConfig(repoRoot);
+  print(boundedOutput("budget", config.budgets.maxToolOutputChars, budgetReport(repoRoot), cliVisibleChars).output);
+});
 program.command("validate-plugins").option("--repo <repo>", "repository root", ".").action((opts) => print(validateBundledPlugins(resolveRepo(opts.repo))));
 const hook = program.command("hook");
 hook.command("pre-tool-use").requiredOption("--host <host>").action(async (opts) => {

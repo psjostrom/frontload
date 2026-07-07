@@ -215,7 +215,9 @@ currently open Codex session still reports `Transport closed`, restart Codex so
 it reloads the MCP process. If doctor reports `legacyGlobalConflict`, an older
 global `~/.codex/config.toml` Frontload entry points at another repo; the
 project `.codex/config.toml` is preferred, and the legacy global entry can be
-removed once you no longer need it.
+removed once you no longer need it. If that global entry points at a missing
+absolute path or a stale path containing only `.frontload` state, run
+`frontload upgrade --repo .` from the repo you want Codex to use.
 
 ## CLI Reference
 
@@ -255,7 +257,9 @@ frontload upgrade --repo .
 
 Updates the global `frontload` package, then refreshes only agent integrations
 that already contain a Frontload MCP entry. It does not create starter project
-files or configure new agents.
+files or configure new agents. If an existing managed MCP entry points at a
+missing path or a stale path containing only `.frontload` state, upgrade repins
+it to `--repo`.
 
 After a release, you can also run:
 
@@ -350,8 +354,10 @@ frontload budget --repo .
 ```
 
 Reports logged operations, exact measured baseline/output bytes, signed net
-savings, unmeasured operation counts, largest operations, and recent events.
-Token estimates use `chars / 4`; treat them as directional, not billing-grade.
+savings, and unmeasured operation counts. Oversized reports keep totals and as
+many per-operation aggregates as fit while omitting largest/recent event
+details to stay under the configured tool output cap. Token estimates use
+`chars / 4`; treat them as directional, not billing-grade.
 
 ### `proof`
 

@@ -47,6 +47,8 @@ command launches, and whether it answers `fl_policy`. If doctor passes but a
 running Codex session still reports `Transport closed`, restart Codex so it
 reloads its MCP process. If doctor reports `legacyGlobalConflict`, an older
 global `~/.codex/config.toml` Frontload entry points at another repo; prefer the
-project `.codex/config.toml` entry for new work.
+project `.codex/config.toml` entry for new work. If that global entry points at
+a missing absolute path or a stale path containing only `.frontload` state, run
+`frontload upgrade --repo .` from the repo you want Codex to use.
 
 If your Codex version rejects `required`, `enabled_tools`, or `default_tools_approval_mode`, remove that key and keep the MCP command and args.

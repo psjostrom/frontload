@@ -1,4 +1,4 @@
-import { outputSize } from "./events.js";
+import { outputSize, type BudgetReport } from "./events.js";
 import type { CompactRanked } from "../dossier/dossier.js";
 import type { CommandSummary } from "../types.js";
 
@@ -52,6 +52,65 @@ function compactRunOutput(data: unknown, maxToolOutputChars: number, visibleChar
   return undefined;
 }
 
+function compactBudgetOutput(data: unknown, maxToolOutputChars: number, visibleChars: VisibleChars): unknown | undefined {
+  const report = data as Partial<BudgetReport>;
+  if (
+    typeof report !== "object" ||
+    report === null ||
+    typeof report.summary !== "string" ||
+    typeof report.operations !== "number" ||
+    typeof report.byOperation !== "object" ||
+    report.byOperation === null
+  ) {
+    return undefined;
+  }
+
+  let byOperation = Object.entries(report.byOperation);
+  let omittedOperationGroups = 0;
+  const omittedEventDetails = (Array.isArray(report.largest) ? report.largest.length : 0)
+    + (Array.isArray(report.last20) ? report.last20.length : 0);
+  while (byOperation.length > 0) {
+    const compact = {
+      summary: report.summary,
+      truncated: true,
+      operation: "budget",
+      operations: report.operations,
+      measuredOperations: report.measuredOperations,
+      unmeasuredOperations: report.unmeasuredOperations,
+      totalBaselineBytes: report.totalBaselineBytes,
+      totalMeasuredOutputBytes: report.totalMeasuredOutputBytes,
+      netSavedBytes: report.netSavedBytes,
+      estimatedTokensSaved: report.estimatedTokensSaved,
+      baselineKinds: report.baselineKinds,
+      byOperation: Object.fromEntries(byOperation),
+      ...(omittedEventDetails ? { omittedEventDetails } : {}),
+      ...(omittedOperationGroups ? { omittedOperationGroups } : {})
+    };
+    if (visibleChars(compact) <= maxToolOutputChars) return compact;
+    omittedOperationGroups += 1;
+    byOperation = byOperation.slice(0, -1);
+  }
+
+  const totalsOnly = {
+    summary: report.summary,
+    truncated: true,
+    operation: "budget",
+    operations: report.operations,
+    measuredOperations: report.measuredOperations,
+    unmeasuredOperations: report.unmeasuredOperations,
+    totalBaselineBytes: report.totalBaselineBytes,
+    totalMeasuredOutputBytes: report.totalMeasuredOutputBytes,
+    netSavedBytes: report.netSavedBytes,
+    estimatedTokensSaved: report.estimatedTokensSaved,
+    baselineKinds: report.baselineKinds,
+    ...(omittedEventDetails ? { omittedEventDetails } : {}),
+    omittedOperationGroups
+  };
+  if (visibleChars(totalsOnly) <= maxToolOutputChars) return totalsOnly;
+
+  return undefined;
+}
+
 export function withheldOutput(
   operation: string,
   maxToolOutputChars: number,
@@ -61,6 +120,10 @@ export function withheldOutput(
 ): unknown {
   if (operation === "run") {
     const compact = compactRunOutput(data, maxToolOutputChars, visibleChars);
+    if (compact) return compact;
+  }
+  if (operation === "budget") {
+    const compact = compactBudgetOutput(data, maxToolOutputChars, visibleChars);
     if (compact) return compact;
   }
 
