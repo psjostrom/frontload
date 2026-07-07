@@ -251,6 +251,51 @@ describe("hook entry adapters", () => {
     }
   });
 
+  it("uses the tool cwd before host project directory when rewriting commands", async () => {
+    const toolRepo = initializedRepo();
+    const codexRepo = initializedRepo();
+    const previousCodex = process.env.CODEX_PROJECT_DIR;
+    process.env.CODEX_PROJECT_DIR = codexRepo;
+
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Bash",
+        tool_input: { command: "pnpm test", workdir: toolRepo }
+      });
+      const codex = JSON.parse((await runPreToolUseHook("codex", payload))!);
+
+      expect(codex.hookSpecificOutput.updatedInput.command).toContain(toolRepo);
+      expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
+    } finally {
+      if (previousCodex === undefined) delete process.env.CODEX_PROJECT_DIR;
+      else process.env.CODEX_PROJECT_DIR = previousCodex;
+    }
+  });
+
+  it("uses the hook process cwd before host project directory when no tool cwd is provided", async () => {
+    const toolRepo = initializedRepo();
+    const codexRepo = initializedRepo();
+    const previousCodex = process.env.CODEX_PROJECT_DIR;
+    const previousCwd = process.cwd();
+    process.env.CODEX_PROJECT_DIR = codexRepo;
+    process.chdir(toolRepo);
+
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Bash",
+        tool_input: { command: "pnpm test" }
+      });
+      const codex = JSON.parse((await runPreToolUseHook("codex", payload))!);
+
+      expect(codex.hookSpecificOutput.updatedInput.command).toContain(toolRepo);
+      expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
+    } finally {
+      process.chdir(previousCwd);
+      if (previousCodex === undefined) delete process.env.CODEX_PROJECT_DIR;
+      else process.env.CODEX_PROJECT_DIR = previousCodex;
+    }
+  });
+
   it("does not emit an invalid replacement when structured output cannot fit", async () => {
     const repo = initializedRepo();
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({

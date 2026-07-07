@@ -24,15 +24,12 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function startingDirectory(payload: Record<string, unknown>, host: HookHost): string {
+function startingDirectories(payload: Record<string, unknown>, host: HookHost): string[] {
   const input = payload.tool_input && typeof payload.tool_input === "object" && !Array.isArray(payload.tool_input) ? (payload.tool_input as Record<string, unknown>) : {};
   const hostProjectDir = host === "claude" ? process.env.CLAUDE_PROJECT_DIR : process.env.CODEX_PROJECT_DIR;
-  return path.resolve(
-    stringValue(hostProjectDir) ??
-      stringValue(payload.cwd) ??
-      stringValue(input.cwd) ??
-      process.cwd()
-  );
+  const toolCwds = [stringValue(input.workdir), stringValue(input.cwd), stringValue(payload.cwd)].filter((value): value is string => !!value);
+  const fallbackDirs = [toolCwds.length ? null : process.cwd(), stringValue(hostProjectDir)].filter((value): value is string => !!value);
+  return [...toolCwds, ...fallbackDirs].map((value) => path.resolve(value));
 }
 
 function initializedRoot(start: string): string | null {
@@ -64,7 +61,11 @@ export async function readStdin(): Promise<string> {
 }
 
 function initializedConfig(payload: Record<string, unknown>, host: HookHost): { root: string; config: ReturnType<typeof loadConfig> } | null {
-  const root = initializedRoot(startingDirectory(payload, host));
+  let root: string | null = null;
+  for (const directory of startingDirectories(payload, host)) {
+    root = initializedRoot(directory);
+    if (root) break;
+  }
   if (!root) return null;
   const config = loadConfig(root);
   if (!config.gate.enabled) return null;

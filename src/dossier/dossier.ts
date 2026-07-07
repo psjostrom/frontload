@@ -55,6 +55,12 @@ function taskTerms(task: string): string[] {
   return words(task).filter((w) => !genericTaskWords.has(w));
 }
 
+function searchTerms(query: string): string[] {
+  const trimmed = query.trim();
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(trimmed)) return [trimmed.toLowerCase()];
+  return taskTerms(query);
+}
+
 function exactTermMatches(value: string, taskWords: string[]): number {
   const normalized = words(value);
   return taskWords.filter((w) => normalized.includes(w)).length;
@@ -121,6 +127,7 @@ function scoreFile(file: IndexedFile, taskWords: string[], index: RepoIndex): Ra
 }
 
 function contentSignals(repoRoot: string, file: IndexedFile, query: string, queryWords: string[], maxMatches = 3): { score: number; why: string[]; matches: SearchMatch[] } {
+  const maxScore = 60;
   const needle = query.trim().toLowerCase();
   if (!needle) return { score: 0, why: [], matches: [] };
   const abs = path.resolve(repoRoot, file.path);
@@ -138,7 +145,7 @@ function contentSignals(repoRoot: string, file: IndexedFile, query: string, quer
     const exact = needle.length > 1 && lower.includes(needle);
     const termHits = queryWords.filter((word) => lower.includes(word)).length;
     if (!exact && termHits === 0) return;
-    score += exact ? 30 : Math.min(termHits * 8, 20);
+    score = Math.min(maxScore, score + (exact ? 30 : Math.min(termHits * 8, 20)));
     if (matches.length < maxMatches) {
       matches.push({ line: i + 1, text: capText(redactSecrets(line.trim()).text, 240).text });
     }
@@ -238,7 +245,7 @@ export type MeasuredSearchResult = {
 
 export async function searchIndexMeasured(repoRoot: string, query: string, limit = 10): Promise<MeasuredSearchResult> {
   const index = await loadFreshIndex(repoRoot);
-  const queryWords = taskTerms(query);
+  const queryWords = searchTerms(query);
   const unboundedResults = !queryWords.length && /^[\w./-]+$/.test(query.trim())
     ? inventorySearch(index, query)
     : index.files

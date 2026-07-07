@@ -65,6 +65,20 @@ describe("command summary", () => {
     expect(result.summary).toContain("repo-b repoMatches=true");
   });
 
+  it("allows package e2e scripts when package metadata exists", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-run-e2e-"));
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({
+      scripts: {
+        e2e: "node -e \"console.log('e2e ok')\""
+      }
+    }));
+
+    const result = await runSummary(dir, "test", ["pnpm", "e2e"], false);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toContain("e2e ok");
+  });
+
   it("allows common Gradle test commands when Gradle metadata exists", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-gradle-"));
     fs.writeFileSync(path.join(dir, "build.gradle.kts"), "");

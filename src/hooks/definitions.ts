@@ -16,7 +16,7 @@ export type HookDefinition = {
 };
 
 function codexHookCommand(hook: "pre-tool-use" | "post-tool-use"): string {
-  return `dir="\${CODEX_PROJECT_DIR:-$PWD}"; if [ -f "$dir" ]; then dir=$(dirname "$dir"); fi; dir=$(cd "$dir" 2>/dev/null && pwd -P) || exit 0; while :; do if [ -d "$dir/.frontload" ]; then exec frontload hook ${hook} --host codex; fi; parent=$(dirname "$dir"); if [ "$parent" = "$dir" ]; then exit 0; fi; dir="$parent"; done`;
+  return `dir="\${PWD:-$CODEX_PROJECT_DIR}"; if [ -f "$dir" ]; then dir=$(dirname "$dir"); fi; dir=$(cd "$dir" 2>/dev/null && pwd -P) || exit 0; while :; do if [ -d "$dir/.frontload" ]; then exec frontload hook ${hook} --host codex; fi; parent=$(dirname "$dir"); if [ "$parent" = "$dir" ]; then exit 0; fi; dir="$parent"; done`;
 }
 
 export const hookDefinitions: Record<HookHost, HookDefinition[]> = {

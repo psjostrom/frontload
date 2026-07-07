@@ -40,7 +40,7 @@ describe("installer", () => {
       path.relative(repo, path.join(home, ".codex/hooks.json")),
       path.relative(repo, path.join(home, ".codex/skills/frontload"))
     ]);
-    expect(codexConfig).toContain("[mcp_servers.frontload]");
+    expect(codexConfig).toMatch(/^\[mcp_servers\.frontload_[^\]]+\]$/m);
     expect(codexConfig).toContain('command = "frontload"');
     expect(codexConfig).toContain(`args = ["mcp", "--repo", "${repo}"]`);
     expect(JSON.parse(fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8")).hooks).toEqual({
@@ -94,6 +94,26 @@ describe("installer", () => {
     expect(configB).toContain(`args = ["mcp", "--repo", "${repoB}"]`);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
     expect(hooks.hooks.PreToolUse[0].hooks[0].command).toBe(hookDefinitions.codex[0].hook.command);
+  });
+
+  it("uses distinct Codex MCP server names for distinct project repos", () => {
+    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-a-"));
+    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-b-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-multi-"));
+
+    initAll(repoA, ["codex"], home);
+    initAll(repoB, ["codex"], home);
+
+    const configA = fs.readFileSync(path.join(repoA, ".codex/config.toml"), "utf8");
+    const configB = fs.readFileSync(path.join(repoB, ".codex/config.toml"), "utf8");
+    const serverA = configA.match(/^\[mcp_servers\.([^\]]+)\]$/m)?.[1];
+    const serverB = configB.match(/^\[mcp_servers\.([^\]]+)\]$/m)?.[1];
+
+    expect(serverA).toMatch(/^frontload_/);
+    expect(serverB).toMatch(/^frontload_/);
+    expect(serverA).not.toBe(serverB);
+    expect(configA).toContain(`args = ["mcp", "--repo", "${repoA}"]`);
+    expect(configB).toContain(`args = ["mcp", "--repo", "${repoB}"]`);
   });
 
   it("configures all supported agent adapters from init", () => {

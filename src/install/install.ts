@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
@@ -164,9 +165,22 @@ function tomlArray(values: string[]): string {
   return `[${values.map(tomlString).join(", ")}]`;
 }
 
-function codexMcpTomlBlock(entry: McpEntry): string {
+function codexServerSlug(repo: string): string {
+  const resolved = path.resolve(repo);
+  const basename = path.basename(resolved).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  const slug = basename || "repo";
+  const hash = crypto.createHash("sha256").update(resolved).digest("hex").slice(0, 8);
+  return `frontload_${slug.slice(0, 40)}_${hash}`;
+}
+
+function codexServerNameFromEntry(entry: McpEntry): string {
+  const repo = repoArgFromArgs(entry.args);
+  return repo ? codexServerSlug(repo) : "frontload";
+}
+
+function codexMcpTomlBlock(entry: McpEntry, serverName: string): string {
   return [
-    "[mcp_servers.frontload]",
+    `[mcp_servers.${serverName}]`,
     `command = ${tomlString(entry.command)}`,
     `args = ${tomlArray(entry.args)}`,
     "startup_timeout_sec = 20",
@@ -225,10 +239,41 @@ function removeTomlTable(text: string, tableName: string): { text: string; remov
   return { text: next, removed: true };
 }
 
+function isCodexFrontloadServerTable(tableName: string): boolean {
+  const prefix = "mcp_servers.";
+  if (!tableName.startsWith(prefix)) return false;
+  const serverName = tableName.slice(prefix.length);
+  return !serverName.includes(".") && (serverName === "frontload" || serverName.startsWith("frontload_"));
+}
+
+function codexFrontloadServerTables(text: string): string[] {
+  const tables = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const table = tomlTableName(line);
+    if (table && isCodexFrontloadServerTable(table)) tables.add(table);
+  }
+  return [...tables];
+}
+
+function removeCodexFrontloadTables(text: string, keepTable?: string): { text: string; removed: boolean } {
+  let next = text;
+  let removed = false;
+  for (const table of codexFrontloadServerTables(text)) {
+    if (table === keepTable) continue;
+    const result = removeTomlTable(next, table);
+    next = result.text;
+    removed = removed || result.removed;
+  }
+  return { text: next, removed };
+}
+
 function upsertCodexMcpServer(file: string, entry: McpEntry, force: boolean): WriteResult {
   const existed = fs.existsSync(file);
   const current = existed ? fs.readFileSync(file, "utf8") : "";
-  const next = upsertTomlTable(current, "mcp_servers.frontload", codexMcpTomlBlock(entry));
+  const serverName = codexServerNameFromEntry(entry);
+  const tableName = `mcp_servers.${serverName}`;
+  const cleaned = removeCodexFrontloadTables(current, tableName).text;
+  const next = upsertTomlTable(cleaned, tableName, codexMcpTomlBlock(entry, serverName));
   if (!force && current === next) return { path: file, action: "skipped" };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, next);
@@ -238,7 +283,7 @@ function upsertCodexMcpServer(file: string, entry: McpEntry, force: boolean): Wr
 function removeCodexMcpServer(file: string): boolean {
   if (!fs.existsSync(file)) return false;
   const current = fs.readFileSync(file, "utf8");
-  const result = removeTomlTable(current, "mcp_servers.frontload");
+  const result = removeCodexFrontloadTables(current);
   if (!result.removed) return false;
   fs.writeFileSync(file, result.text);
   return true;
@@ -246,7 +291,7 @@ function removeCodexMcpServer(file: string): boolean {
 
 function hasCodexMcpServer(file: string): boolean {
   if (!fs.existsSync(file)) return false;
-  return fs.readFileSync(file, "utf8").split(/\r?\n/).some((line) => line.trim() === "[mcp_servers.frontload]");
+  return codexFrontloadServerTables(fs.readFileSync(file, "utf8")).length > 0;
 }
 
 function claudeSettingsPath(repoRoot: string, homeDir: string, scope: ConfigScope): string {
@@ -588,7 +633,10 @@ function tomlTableBlock(text: string, tableName: string): string | null {
 
 function existingCodexRepoArg(configPath: string): string | undefined {
   if (!fs.existsSync(configPath)) return undefined;
-  const block = tomlTableBlock(fs.readFileSync(configPath, "utf8"), "mcp_servers.frontload");
+  const text = fs.readFileSync(configPath, "utf8");
+  const table = codexFrontloadServerTables(text)[0];
+  if (!table) return undefined;
+  const block = tomlTableBlock(text, table);
   const match = block?.match(/^args\s*=\s*(\[.*\])$/m);
   if (!match) return undefined;
   try {

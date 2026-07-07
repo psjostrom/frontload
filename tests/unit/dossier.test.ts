@@ -33,6 +33,77 @@ describe("dossier", () => {
     expect(match?.why).toContain("content match");
   });
 
+  it("surfaces camelCase symbol files for focused search terms", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-search-camel-symbol-"));
+    fs.mkdirSync(path.join(dir, "lib/__tests__"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "app/components/__tests__"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "lib/byFeel.ts"), [
+      "const SUFFIX = \" By Feel\";",
+      "export function isByFeel(name: string): boolean { return name.endsWith(SUFFIX); }",
+      "export function addByFeel(name: string): string { return isByFeel(name) ? name : name + SUFFIX; }",
+      "export function removeByFeel(name: string): string { return isByFeel(name) ? name.slice(0, -SUFFIX.length) : name; }",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "lib/__tests__/byFeel.test.ts"), [
+      "import { addByFeel, isByFeel, removeByFeel } from \"../byFeel\";",
+      "it(\"handles By Feel suffixes\", () => {",
+      "  expect(addByFeel(\"W05 Long\")).toBe(\"W05 Long By Feel\");",
+      "  expect(isByFeel(\"W05 Long By Feel\")).toBe(true);",
+      "  expect(removeByFeel(\"W05 Long By Feel\")).toBe(\"W05 Long\");",
+      "});",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "app/components/EventModal.tsx"), [
+      "import { addByFeel, isByFeel } from \"../../lib/byFeel\";",
+      "export function EventModal() { return addByFeel(\"W05 Long\"); }",
+      ""
+    ].join("\n"));
+    for (let i = 0; i < 6; i += 1) {
+      const noisyAssertions = Array.from(
+        { length: 30 },
+        (_, line) => `  expect("W05 Long By Feel ${i}-${line}").toContain("By Feel");`
+      );
+      fs.writeFileSync(path.join(dir, `app/components/__tests__/Noise${i}.test.tsx`), [
+        "it(\"mentions By Feel repeatedly in unrelated UI assertions\", () => {",
+        ...noisyAssertions,
+        "});",
+        ""
+      ].join("\n"));
+    }
+    await buildIndex(dir);
+
+    const results = await searchIndex(dir, "addByFeel isByFeel By Feel lib/byFeel", 5);
+
+    expect(results[0]?.file.path).toBe("lib/byFeel.ts");
+  });
+
+  it("ranks camelCase domain files in task dossiers", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-dossier-camel-domain-"));
+    fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "app/components"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "lib/byFeel.ts"), [
+      "const SUFFIX = \" By Feel\";",
+      "export function isByFeel(name: string): boolean { return name.endsWith(SUFFIX); }",
+      "export function addByFeel(name: string): string { return isByFeel(name) ? name : name + SUFFIX; }",
+      "export function removeByFeel(name: string): string { return isByFeel(name) ? name.slice(0, -SUFFIX.length) : name; }",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "app/components/EventModal.tsx"), [
+      "import { addByFeel, isByFeel } from \"../../lib/byFeel\";",
+      "export function EventModal() { return addByFeel(\"W05 Long\"); }",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "lib/constants.ts"), [
+      "export function getWorkoutCategory(name: string) { return name.toLowerCase(); }",
+      ""
+    ].join("\n"));
+    await buildIndex(dir);
+
+    const dossier = await generateDossier(dir, "revert a by feel workout to a regular workout", 12000);
+
+    expect(dossier.ranked[0]?.file.path).toBe("lib/byFeel.ts");
+  });
+
   it("returns exact unbounded search results alongside the bounded response", async () => {
     await buildIndex(fixture);
     const measured = await searchIndexMeasured(fixture, ".", 2);

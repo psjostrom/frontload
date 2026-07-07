@@ -28,12 +28,19 @@ export function capText(text: string, maxChars: number): { text: string; truncat
 }
 
 export function words(input: string): string[] {
+  const compactWords = input
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((w) => w.length > 1);
+  const withIdentifierBoundaries = input
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
   return Array.from(
     new Set(
-      input
+      compactWords.concat(withIdentifierBoundaries
         .toLowerCase()
         .split(/[^a-z0-9]+/g)
-        .filter((w) => w.length > 1)
+        .filter((w) => w.length > 1))
     )
   );
 }
