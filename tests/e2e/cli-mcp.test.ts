@@ -618,7 +618,10 @@ describe("e2e proof workflow", () => {
   it("treats a successful bounded policy probe as responsive without recording budget events", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-bin-"));
     const cli = path.resolve("dist/src/cli/index.js");
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as { version: string };
+    writeInstalledFrontloadPackage(bin, pkg.version);
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
       budgets: {
         maxToolOutputChars: 64
@@ -633,7 +636,12 @@ describe("e2e proof workflow", () => {
       ""
     ].join("\n"));
 
-    const result = await execa(process.execPath, [cli, "doctor", "--repo", repo, "--home", home]);
+    const result = await execa(process.execPath, [cli, "doctor", "--repo", repo, "--home", home], {
+      env: {
+        ...process.env,
+        PATH: bin
+      }
+    });
     const data = JSON.parse(result.stdout);
 
     expect(data.checks.codex).toMatchObject({
@@ -641,7 +649,44 @@ describe("e2e proof workflow", () => {
       launches: true,
       responds: true
     });
+    expect(data.checks.installedCommand).toMatchObject({
+      command: "frontload",
+      available: true,
+      version: pkg.version,
+      matchesCurrentVersion: true,
+      regularInstall: true
+    });
+    expect(data.checks.dogfood).toBeUndefined();
     expect(readEvents(repo).filter((event) => event.operation === "policy")).toEqual([]);
+  });
+
+  it("advertises expected Frontload MCP tools over stdio", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-tools-"));
+    const cli = path.resolve("dist/src/cli/index.js");
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}");
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [cli, "mcp", "--repo", repo],
+      stderr: "pipe"
+    });
+    const client = new Client({ name: "frontload-test", version: "0.0.0" });
+
+    try {
+      await client.connect(transport, { timeout: 5000, maxTotalTimeout: 5000 });
+      const listed = await client.listTools(undefined, { timeout: 5000, maxTotalTimeout: 5000 });
+      const names = listed.tools.map((tool) => tool.name).sort();
+
+      expect(names).toEqual(expect.arrayContaining([
+        "fl_budget_report",
+        "fl_git_diff_summary",
+        "fl_read_budgeted",
+        "fl_repo_dossier",
+        "fl_run_summary",
+        "fl_search"
+      ]));
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   });
 
   it("creates project-local Codex MCP config from the built init command", async () => {

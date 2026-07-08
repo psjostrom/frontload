@@ -340,16 +340,22 @@ function installedFrontloadCheck(repoRoot: string): InstalledFrontloadCheck {
     };
   }
   try {
-    const repoVersion = packageVersionFrom(repoRoot);
+    let repoVersion = packageVersion;
     const version = execFileSync(executable, ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 5000
     }).trim();
     const packageRoot = packageRootFromExecutable(executable);
-    const matchesTargetPackage = packageRoot
-      ? dogfoodPackageFingerprint(packageRoot) === dogfoodPackageFingerprint(repoRoot)
-      : false;
+    let matchesTargetPackage = false;
+    try {
+      repoVersion = packageVersionFrom(repoRoot);
+      matchesTargetPackage = packageRoot
+        ? dogfoodPackageFingerprint(packageRoot) === dogfoodPackageFingerprint(repoRoot)
+        : false;
+    } catch {
+      matchesTargetPackage = false;
+    }
     return {
       command: "frontload",
       available: true,
@@ -680,6 +686,7 @@ program.command("doctor")
         };
       })(),
       mcpServer: true,
+      installedCommand: installedFrontloadCheck(repoRoot),
       codex,
       platform: os.platform(),
       ...(dogfood ? { dogfood } : {})
