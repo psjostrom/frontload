@@ -21,6 +21,7 @@
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
     "frontload": "node dist/src/cli/index.js",
+    "release:pr": "node scripts/create-release-pr.mjs",
     "test": "vitest run tests/unit",
     "test:watch": "vitest",
     "e2e": "vitest run tests/e2e",

@@ -1,0 +1,74 @@
+name: Publish npm package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: E2E tests
+        run: pnpm e2e
+
+      - name: Validate bundled plugins
+        run: node dist/src/cli/index.js validate-plugins --repo .
+
+      - name: Read package version
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Check npm version
+        run: |
+          if npm view frontload@${PACKAGE_VERSION} version >/dev/null 2>&1; then
+            echo "PUBLISH_NPM=false" >> "$GITHUB_ENV"
+            echo "frontload@${PACKAGE_VERSION} is already published."
+          else
+            echo "PUBLISH_NPM=true" >> "$GITHUB_ENV"
+            echo "frontload@${PACKAGE_VERSION} is not published yet."
+          fi
+
+      - name: Publish to npm
+        if: env.PUBLISH_NPM == 'true'
+        run: npm publish --access public

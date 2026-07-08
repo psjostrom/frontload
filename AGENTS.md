@@ -145,6 +145,13 @@ all commits. Do not assume the latest commit is the whole release.
 The package version lives in `package.json`; `src/version.ts` reads that value at
 runtime. Keep the lockfile consistent when package metadata changes.
 
+Npm publishing runs from `.github/workflows/npm-publish.yml` after release
+version bumps reach `main`. The workflow uses npm trusted publishing with GitHub
+Actions OIDC; do not add long-lived `NPM_TOKEN` or `NODE_AUTH_TOKEN` publish
+secrets. Create release bump PRs with `.github/workflows/create-release-pr.yml`
+or `pnpm release:pr -- --bump patch`; review and merge the PR to trigger
+publishing.
+
 ## Security
 
 Frontload is local-first. Do not add runtime LLM API calls, source upload, or
