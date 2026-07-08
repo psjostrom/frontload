@@ -132,15 +132,36 @@ jobs:
               });
             }
 
-            // Open the pull request
-            const { data: pr } = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: TITLE,
-              head: BRANCH,
-              base: 'main',
-              body: body,
-            });
-
-            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            // Open the pull request; on reruns reuse the existing open PR
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: TITLE,
+                head: BRANCH,
+                base: 'main',
+                body: body,
+              }));
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            } catch (err) {
+              if (err.status !== 422) throw err;
+              const { data: existing } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${BRANCH}`,
+                base: 'main',
+                state: 'open',
+              });
+              if (existing.length === 0) throw err;
+              pr = existing[0];
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                title: TITLE,
+                body: body,
+              });
+              console.log(`Updated existing PR #${pr.number}: ${pr.html_url}`);
+            }
 

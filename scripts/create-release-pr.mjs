@@ -17,7 +17,7 @@ Options:
   --version <x.y.z>  Create a release PR for an explicit version.
   --bump <kind>      Bump the current package version by patch, minor, or major. Defaults to patch.
   --remote <name>    Git remote to fetch and push. Defaults to origin.
-  --prepare          CI mode: bump package.json and write outputs to \$GITHUB_OUTPUT; skip git operations.
+  --prepare          CI mode: bump package.json and write outputs to \$GITHUB_OUTPUT; skips git write operations (switch/commit/push) but still reads git history for release notes.
   --help             Show this help text.`;
 }
 
