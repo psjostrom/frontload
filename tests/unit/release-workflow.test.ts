@@ -93,6 +93,7 @@ describe("npm publish workflow", () => {
     expect(permissions).toContain("  contents: write");
     expect(permissions).toContain("  pull-requests: write");
     expect(stepBlock(job, "Checkout")).toContain("fetch-depth: 0");
+    expect(stepBlock(job, "Checkout")).toContain("ref: main");
     expect(stepBlock(job, "Set up Node")).toContain('node-version: "20"');
 
     const prepareStep = stepBlock(job, "Prepare release metadata");

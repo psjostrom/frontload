@@ -31,6 +31,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -68,15 +69,11 @@ jobs:
               'utf8'
             );
 
-            // Resolve main HEAD SHA
-            const { data: mainRef } = await github.rest.git.getRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: 'heads/main',
-            });
-            const mainSha = mainRef.object.sha;
+            // Use the SHA of the checked-out commit so the API commit
+            // is always consistent with the workspace state.
+            const mainSha = context.sha;
 
-            // Get the base tree SHA from the current main commit
+            // Get the base tree SHA from the checked-out commit
             const { data: mainCommit } = await github.rest.git.getCommit({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -113,13 +110,24 @@ jobs:
               parents: [mainSha],
             });
 
-            // Create the release branch pointing at the new commit
-            await github.rest.git.createRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: `refs/heads/${BRANCH}`,
-              sha: commit.sha,
-            });
+            // Create the release branch; on reruns update it instead of failing
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/heads/${BRANCH}`,
+                sha: commit.sha,
+              });
+            } catch (err) {
+              if (err.status !== 422) throw err;
+              await github.rest.git.updateRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${BRANCH}`,
+                sha: commit.sha,
+                force: true,
+              });
+            }
 
             // Open the pull request
             const { data: pr } = await github.rest.pulls.create({
