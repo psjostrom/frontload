@@ -79,6 +79,18 @@ describe("npm publish workflow", () => {
     expect(stepBlock(publish, "Publish to npm")).toContain("npm publish npm-package/frontload-*.tgz --access public");
     expect(publish).not.toContain("pnpm install");
     expect(publish).not.toContain("pnpm test");
+
+    const githubRelease = jobBlock(workflow, "github-release");
+    expect(githubRelease).toContain("needs:\n      - check-version\n      - publish");
+    expect(githubRelease).toContain("if: needs.check-version.outputs.should_publish == 'true'");
+    expect(githubRelease).toContain("permissions:\n      contents: write");
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain("GH_TOKEN: ${{ github.token }}");
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain(
+      'gh release create "v${PACKAGE_VERSION}"'
+    );
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain("--generate-notes");
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain('--target "$GITHUB_SHA"');
+
     expect(workflow).not.toContain("NPM_TOKEN");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN");
   });
