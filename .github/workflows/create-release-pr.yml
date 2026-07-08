@@ -49,6 +49,7 @@ jobs:
           else
             node scripts/create-release-pr.mjs --prepare --bump "$BUMP_INPUT"
           fi
+          echo "main_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create verified commit, branch, and PR
         uses: actions/github-script@v7
@@ -56,6 +57,7 @@ jobs:
           BRANCH: ${{ steps.prepare.outputs.branch }}
           TITLE: ${{ steps.prepare.outputs.title }}
           BODY_FILE: ${{ steps.prepare.outputs.body_file }}
+          MAIN_SHA: ${{ steps.prepare.outputs.main_sha }}
         with:
           script: |
             const fs = require('fs');
@@ -68,13 +70,9 @@ jobs:
               'utf8'
             );
 
-            // Use the current main branch head as the base for the release commit.
-            const { data: mainRef } = await github.rest.git.getRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: 'heads/main',
-            });
-            const mainSha = mainRef.object.sha;
+            // Use the SHA captured at checkout time so the workspace files
+            // and the API commit tree are always consistent.
+            const mainSha = process.env.MAIN_SHA;
 
             // Get the base tree SHA from main
             const { data: mainCommit } = await github.rest.git.getCommit({

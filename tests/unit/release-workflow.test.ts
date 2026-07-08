@@ -113,12 +113,16 @@ describe("npm publish workflow", () => {
     expect(prepareStep).toContain("BUMP_INPUT: ${{ inputs.bump }}");
     expect(prepareStep).toContain('node scripts/create-release-pr.mjs --prepare --version "$VERSION_INPUT"');
     expect(prepareStep).toContain('node scripts/create-release-pr.mjs --prepare --bump "$BUMP_INPUT"');
+    expect(prepareStep).toContain('echo "main_sha=$(git rev-parse HEAD)"');
+
     const commitStep = stepBlock(job, "Create verified commit, branch, and PR");
     expect(commitStep).toContain("actions/github-script");
-    expect(commitStep).toContain("github.rest.git.getRef");
+    expect(commitStep).toContain("MAIN_SHA: ${{ steps.prepare.outputs.main_sha }}");
+    expect(commitStep).toContain("process.env.MAIN_SHA");
     expect(commitStep).toContain("github.rest.git.createCommit");
     expect(commitStep).toContain("github.rest.pulls.create");
     expect(commitStep).toContain("github.rest.pulls.update");
+    expect(commitStep).not.toContain("github.rest.git.getRef");
 
     expect(workflow).not.toContain("pnpm install");
     expect(workflow).not.toContain("pnpm/action-setup");
