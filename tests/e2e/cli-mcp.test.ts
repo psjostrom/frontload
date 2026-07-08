@@ -29,6 +29,59 @@ function writeShellScript(file: string, content: string): void {
   fs.chmodSync(file, 0o755);
 }
 
+async function execaWithPty(command: string, args: string[], input: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const runner = String.raw`
+import base64, os, pty, select, signal, sys, time
+
+input_bytes = base64.b64decode(sys.argv[1])
+prompt = sys.argv[2].encode()
+cmd = sys.argv[3:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvpe(cmd[0], cmd, os.environ)
+
+sent = False
+buffer = b""
+deadline = time.time() + 10
+status = 1
+while True:
+    ready, _, _ = select.select([fd], [], [], 0.05)
+    if ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            chunk = b""
+        if chunk:
+            buffer += chunk
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+    if not sent and prompt in buffer:
+        os.write(fd, input_bytes)
+        sent = True
+    finished, status = os.waitpid(pid, os.WNOHANG)
+    if finished:
+        break
+    if time.time() > deadline:
+        os.kill(pid, signal.SIGTERM)
+        finished, status = os.waitpid(pid, 0)
+        break
+
+if os.WIFEXITED(status):
+    sys.exit(os.WEXITSTATUS(status))
+if os.WIFSIGNALED(status):
+    sys.exit(128 + os.WTERMSIG(status))
+sys.exit(1)
+`;
+  await execa("python3", [
+    "-c",
+    runner,
+    Buffer.from(input, "utf8").toString("base64"),
+    "Choose Claude Code MCP config scope.",
+    command,
+    ...args
+  ], { env, timeout: 15000 });
+}
+
 async function waitForProcessExit(pid: number, timeoutMs = 2000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -705,6 +758,32 @@ describe("e2e proof workflow", () => {
     expect(config).toContain(`args = ["mcp", "--repo", "${repo}"]`);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
+  });
+
+  const ttyIt = process.platform === "win32" ? it.skip : it;
+
+  ttyIt("uses the interactive Claude scope radio selection when initializing global config", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-claude-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-bin-"));
+    writeShellScript(path.join(bin, "frontload"), "#!/bin/sh\nexit 0\n");
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    await execaWithPty(process.execPath, [
+      cli,
+      "init",
+      "--repo",
+      repo,
+      "--agents",
+      "claude",
+      "--home",
+      home
+    ], "\x1b[B\r", { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` });
+
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".claude/settings.json"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(false);
   });
 
   it("keeps the original MCP error when event persistence also fails", async () => {
