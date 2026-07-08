@@ -135,3 +135,27 @@ jobs:
 
       - name: Publish to npm
         run: npm publish npm-package/frontload-*.tgz --access public
+
+  github-release:
+    name: github-release
+    needs:
+      - check-version
+      - publish
+    if: needs.check-version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create GitHub release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ needs.check-version.outputs.package_version }}
+        run: |
+          gh release create "v${PACKAGE_VERSION}" \
+            --title "v${PACKAGE_VERSION}" \
+            --generate-notes \
+            --target "$GITHUB_SHA"
