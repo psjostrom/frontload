@@ -49,10 +49,11 @@ does not replace the first repo's MCP entry.
 
 ## What You Get
 
-Frontload gives coding agents a smaller, more deliberate workflow:
+Frontload gives coding agents a smaller, more deliberate workflow behind the
+normal agent experience:
 
 ```text
-repo index -> task dossier -> budgeted reads -> summarized commands -> budget report
+task -> MCP dossier/search -> budgeted reads -> summarized commands -> budget report
 ```
 
 The main capabilities are:
@@ -63,7 +64,8 @@ The main capabilities are:
 - summarized test, lint, typecheck, and build output with full logs kept locally
 - compact git diff summaries
 - budget reports showing measured context savings
-- MCP tools so supported agents can use the same workflow directly
+- MCP tools and skills so supported agents can use these capabilities without a
+  manual CLI routine
 
 ## Requirements
 
@@ -73,7 +75,7 @@ The main capabilities are:
 
 ## Daily Workflow
 
-### 1. Initialize Once
+### 1. Initialize the Repo Once
 
 ```bash
 npx frontload init
@@ -89,7 +91,38 @@ For Codex, open `/hooks` once after installation to review and approve the
 Frontload command hooks. For Claude Code, choose whether MCP config should be
 written to the project or global config when prompted.
 
-### 2. Index the Repo
+Restart your editor so it loads the MCP server. From that point, use Codex or
+Claude Code the way you normally do. The installed Frontload skill tells the
+agent to start broad repo work with MCP dossiers and search, read bounded file
+windows instead of dumping whole files, run noisy commands through summaries,
+and inspect compact diffs before reviewing changes.
+
+You do not need to run `frontload index`, `frontload dossier`, or
+`frontload search` as a daily setup step. Dossier and search calls build the
+index when it is missing and refresh changed files automatically.
+
+### 2. Let the Agent Use Frontload
+
+After setup, a typical agent turn looks like this from the agent's side:
+
+1. Call `fl_repo_dossier` for the task.
+2. Use `fl_search` when the dossier needs more concrete symbols, filenames, or
+   domain terms.
+3. Use `fl_read_budgeted` for the specific file windows it needs.
+4. Run tests, typechecks, lint, and build commands through `fl_run_summary`.
+5. Use `fl_git_diff_summary` and `fl_budget_report` before wrapping up.
+
+The user-facing workflow is still just normal agent work: describe the task,
+review the changes, and rely on Frontload to keep the agent's context smaller
+and more focused.
+
+## CLI Workflow
+
+The CLI commands remain useful for debugging, automation, unsupported agents,
+or checking what the MCP tools return. They are the manual equivalent of the
+agent-first workflow above.
+
+### Refresh the Repo Index
 
 ```bash
 frontload index --repo .
@@ -98,9 +131,10 @@ frontload index --repo .
 The index records supported files, symbols, imports, dependency edges, sizes,
 and basic categories. It scans only configured literal file extensions and
 ignores common heavy paths such as `node_modules`, build output, coverage,
-lockfiles, agent worktrees, framework caches, and `.frontload`.
+lockfiles, agent worktrees, framework caches, and `.frontload`. The MCP dossier
+and search tools call the same indexing logic automatically when needed.
 
-### 3. Generate a Task Dossier
+### Generate a Task Dossier
 
 ```bash
 frontload dossier "Fix stale chart tooltip value after sensor reconnect" --repo .
@@ -121,7 +155,7 @@ domain words, filenames, or symbols:
 frontload search "StoryViewModel viewedMonth YearMonth navigation" --repo . --limit 12
 ```
 
-### 4. Read Only What Is Needed
+### Read Only What Is Needed
 
 ```bash
 frontload read src/chart/ChartTooltip.tsx --repo . --budget 4000
@@ -138,7 +172,7 @@ secret patterns, and paging hints for larger files.
 - redact common secret patterns
 - suggest next files from import edges when available
 
-### 5. Run Commands Through Summaries
+### Run Commands Through Summaries
 
 ```bash
 frontload run --repo . --kind test -- pnpm test
@@ -153,7 +187,7 @@ Frontload allows commands from `frontload.config.json` and discovers common safe
 project commands from `package.json`, Gradle metadata, and `Cargo.toml`. Use
 `--allow-unconfigured` only for a trusted one-off local command.
 
-### 6. Inspect Diff and Cost
+### Inspect Diff and Cost
 
 ```bash
 frontload diff --repo .
@@ -527,8 +561,8 @@ See [docs/security.md](docs/security.md) for a shorter security summary.
   `frontload --version` works in your shell.
 - Command is not allowed: add a safe prefix to `commands.allowed`, or use
   `--allow-unconfigured` for a trusted one-off local run.
-- Dossier is empty: run `frontload index --repo .` and use more concrete task
-  words.
+- Dossier is empty: use more concrete file, domain, symbol, or error words. If
+  it stays empty, run `frontload doctor --repo .` to verify setup.
 - Codex config key rejected: keep the MCP `command` and `args`, then remove the
   rejected optional key.
 

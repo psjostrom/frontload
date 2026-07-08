@@ -5,7 +5,10 @@ description: Use this when working in a code repository with the Frontload MCP s
 
 # Frontload
 
-Start with `fl_repo_dossier` for the current task. Use `fl_search` for indexed search and `fl_read_budgeted` for bounded file excerpts.
+Start with `fl_repo_dossier` for the current task. Use `fl_search` for indexed
+search and `fl_read_budgeted` for bounded file excerpts. Do not ask the user to
+run `frontload index` before normal work; dossier and search tools build or
+refresh the index automatically.
 
 Run tests, typechecks, and lint through `fl_run_summary` so raw logs stay local while failures are summarized. Use `fl_git_diff_summary` before reviewing changes and `fl_budget_report` before repeating repair loops.
 
