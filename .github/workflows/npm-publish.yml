@@ -1,0 +1,137 @@
+name: Publish npm package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    name: check-version
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.version.outputs.package_version }}
+      should_publish: ${{ steps.check.outputs.should_publish }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Read package version
+        id: version
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          echo "package_version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Check npm version
+        id: check
+        run: |
+          if npm view "frontload@${PACKAGE_VERSION}" version > npm-view.out 2> npm-view.err; then
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "frontload@${PACKAGE_VERSION} is already published."
+          elif grep -q "E404" npm-view.err; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "frontload@${PACKAGE_VERSION} is not published yet."
+          else
+            cat npm-view.err >&2
+            exit 1
+          fi
+
+  verify:
+    name: verify
+    needs: check-version
+    if: needs.check-version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: E2E tests
+        run: pnpm e2e
+
+      - name: Validate bundled plugins
+        run: node dist/src/cli/index.js validate-plugins --repo .
+
+      - name: Pack npm package
+        run: |
+          mkdir -p .release
+          npm pack --pack-destination .release
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: .release/frontload-*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs:
+      - check-version
+      - verify
+    if: needs.check-version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download npm package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: npm-package
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Publish to npm
+        run: npm publish npm-package/frontload-*.tgz --access public

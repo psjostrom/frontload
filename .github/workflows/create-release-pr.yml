@@ -1,0 +1,55 @@
+name: Create release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Explicit semver version, for example 0.1.12. Leave empty to use bump."
+        required: false
+        type: string
+      bump:
+        description: "Version bump to apply when version is empty."
+        required: false
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-release-pr:
+    name: create-release-pr
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+          BUMP_INPUT: ${{ inputs.bump }}
+        run: |
+          if [ -n "$VERSION_INPUT" ]; then
+            node scripts/create-release-pr.mjs --version "$VERSION_INPUT"
+          else
+            node scripts/create-release-pr.mjs --bump "$BUMP_INPUT"
+          fi
