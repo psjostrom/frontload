@@ -39,17 +39,40 @@ function countTextLines(text: string): number {
   return text.endsWith("\n") || text.endsWith("\r") ? lines - 1 : lines;
 }
 
+function countFileLines(filePath: string, size: number): number {
+  if (size === 0) return 0;
+  const fd = fs.openSync(filePath, "r");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let lines = 0;
+  let lastByte: number | undefined;
+  try {
+    for (;;) {
+      const read = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      for (let i = 0; i < read; i += 1) {
+        if (buffer[i] === 10) lines += 1;
+        lastByte = buffer[i];
+      }
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return lastByte === 10 || lastByte === 13 ? lines : lines + 1;
+}
+
 async function untrackedFiles(repoRoot: string): Promise<DiffChangedFile[]> {
   const result = await execa("git", ["ls-files", "--others", "--exclude-standard"], { cwd: repoRoot, reject: false });
   const files = result.stdout.split(/\r?\n/).filter(Boolean).sort();
   return files.map((file) => {
     const abs = path.join(repoRoot, file);
-    const text = fs.readFileSync(abs, "utf8");
-    const bytes = Buffer.byteLength(text);
+    const stat = fs.lstatSync(abs);
+    const symlinkTarget = stat.isSymbolicLink() ? fs.readlinkSync(abs) : undefined;
+    const bytes = symlinkTarget ? Buffer.byteLength(symlinkTarget) : stat.size;
+    const added = symlinkTarget ? countTextLines(symlinkTarget) : stat.isFile() ? countFileLines(abs, stat.size) : 0;
     const category = fileCategory(file);
     return {
       path: file,
-      added: countTextLines(text),
+      added,
       removed: 0,
       category,
       risky: riskyPath(file, category),
@@ -81,7 +104,7 @@ export async function gitDiffSummary(repoRoot: string, options: boolean | GitDif
   const names = changedFiles.map((f) => `- ${f.path}: +${f.added}/-${f.removed}, ${f.category}${f.status === "untracked" ? ", untracked" : ""}${f.bytes !== undefined ? `, ${f.bytes} bytes` : ""}${f.risky ? ", risky" : ""}`).join("\n");
   const omitted = untracked.length ? `\n\n${untracked.length} untracked ${untracked.length === 1 ? "file" : "files"} omitted from diff body.` : "";
   const capped = capText(`Changed files: ${changedFiles.length}\n${names || "No diff."}${omitted}\n\nRisky changes:\n${riskyChanges.map((r) => `- ${r}`).join("\n") || "- none"}`, 8000);
-  const rawDiffBytes = patch + untracked.reduce((sum, file) => sum + (file.bytes ?? 0), 0);
+  const rawDiffBytes = patch;
   return { summary: capped.text, changedFiles, riskyChanges, truncated: capped.truncated, rawDiffBytes };
 }
 

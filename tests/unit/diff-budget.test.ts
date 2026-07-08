@@ -226,7 +226,76 @@ describe("diff and budget", () => {
     });
     expect(summary.summary).toContain("new/feature.ts: +1/-0, source, untracked");
     expect(summary.summary).toContain("2 untracked files omitted from diff body.");
-    expect(summary.rawDiffBytes).toBeGreaterThan(0);
+    const actual = await execa("git", ["diff", "--patch"], { cwd: dir, stripFinalNewline: false });
+    expect(summary.rawDiffBytes).toBe(Buffer.byteLength(actual.stdout));
+  });
+
+  it("does not follow untracked symlinks while summarizing them", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-diff-symlink-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "abg-diff-outside-"));
+    await execa("git", ["init"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "existing.ts"), "export const a = 1;\n");
+    await execa("git", ["add", "."], { cwd: dir });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: dir,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    const target = path.join(outside, "secret.txt");
+    fs.writeFileSync(target, "outside\ncontent\n");
+    fs.symlinkSync(target, path.join(dir, "external-link"));
+    fs.symlinkSync(path.join(outside, "missing.txt"), path.join(dir, "broken-link"));
+
+    const summary = await gitDiffSummary(dir);
+
+    expect(summary.changedFiles.find((file) => file.path === "external-link")).toMatchObject({
+      status: "untracked",
+      added: 1,
+      bytes: Buffer.byteLength(target)
+    });
+    expect(summary.changedFiles.find((file) => file.path === "broken-link")).toMatchObject({
+      status: "untracked",
+      added: 1
+    });
+  });
+
+  it("reports actual byte sizes for binary untracked files", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-diff-binary-"));
+    await execa("git", ["init"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "existing.ts"), "export const a = 1;\n");
+    await execa("git", ["add", "."], { cwd: dir });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: dir,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    fs.writeFileSync(path.join(dir, "binary.bin"), Buffer.from([0xff, 0xfe, 0x00]));
+
+    const summary = await gitDiffSummary(dir);
+
+    expect(summary.changedFiles.find((file) => file.path === "binary.bin")).toMatchObject({
+      status: "untracked",
+      bytes: 3
+    });
+  });
+
+  it("excludes untracked files from staged diff summaries", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-diff-staged-"));
+    await execa("git", ["init"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "existing.ts"), "export const a = 1;\n");
+    await execa("git", ["add", "."], { cwd: dir });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: dir,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    fs.appendFileSync(path.join(dir, "existing.ts"), "export const b = 2;\n");
+    await execa("git", ["add", "existing.ts"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "new.ts"), "export const ignored = true;\n");
+
+    const summary = await gitDiffSummary(dir, { staged: true });
+    const actual = await execa("git", ["diff", "--staged", "--patch"], { cwd: dir, stripFinalNewline: false });
+
+    expect(summary.changedFiles.map((file) => file.path)).toEqual(["existing.ts"]);
+    expect(summary.summary).not.toContain("untracked");
+    expect(summary.rawDiffBytes).toBe(Buffer.byteLength(actual.stdout));
   });
 
   it("can preserve tracked-only diff summaries", async () => {

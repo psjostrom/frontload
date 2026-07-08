@@ -38,10 +38,10 @@ Frontload stores repo-local state under `.frontload/` and adds `.frontload/` to
 the repository's local `.git/info/exclude` when it writes generated state. You
 can still add `.frontload/` to shared `.gitignore` rules if your team prefers
 that convention. `frontload init` prints this local-exclude behavior, and
-`frontload doctor` reports whether the local exclude rule is present. If you use
-Codex, also ignore `.codex/` unless your team
-intentionally wants to share project-local Codex config; Frontload writes an
-absolute repo path there.
+`frontload doctor` reports whether the local exclude rule is present and whether
+it had to repair the rule during the check. If you use Codex, also ignore
+`.codex/` unless your team intentionally wants to share project-local Codex
+config; Frontload writes an absolute repo path there.
 
 Run `npx frontload init` separately in each repository. Frontload writes
 repo-local MCP config where the agent supports it, so initializing another repo
@@ -289,7 +289,8 @@ frontload doctor --repo . --dogfood
 Checks the local environment, Frontload state directory, active Codex MCP config,
 and whether the configured MCP command can launch and answer a health request.
 It also reports whether generated `.frontload/` state is ignored locally through
-`.git/info/exclude`.
+`.git/info/exclude`, including whether doctor repaired that rule during the
+check.
 Add `--dogfood` to fail when the active Codex setup is not using the regular
 installed `frontload` command for the requested repo. `--home <dir>` points
 doctor at an alternate home directory for agent configuration checks.

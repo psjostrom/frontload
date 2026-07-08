@@ -662,6 +662,7 @@ program.command("doctor")
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     const codex = await codexDogfoodCheck(repoRoot, homeDir);
     const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir, codex) : undefined;
+    const beforeStateExclude = stateExcludeStatus(repoRoot);
     const checks = {
       node: process.versions.node,
       repoRoot,
@@ -670,7 +671,14 @@ program.command("doctor")
         fs.writeFileSync(path.join(ensureStateDir(repoRoot), ".doctor"), "ok");
         return true;
       })(),
-      stateExclude: stateExcludeStatus(repoRoot),
+      stateExclude: (() => {
+        const after = stateExcludeStatus(repoRoot);
+        return {
+          ...after,
+          beforeIgnored: beforeStateExclude.ignored,
+          repaired: !beforeStateExclude.ignored && after.ignored
+        };
+      })(),
       mcpServer: true,
       codex,
       platform: os.platform(),
@@ -808,7 +816,8 @@ hook.command("post-tool-use").requiredOption("--host <host>").action(async (opts
 program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => startMcp(resolveRepo(opts.repo)));
 program.command("proof").option("--repo <repo>", "repository root", ".").action((opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  const proofDir = path.join(stateDir(repoRoot), "proof");
+  const stateRoot = ensureStateDir(repoRoot);
+  const proofDir = path.join(stateRoot, "proof");
   const pnpmVersion = (() => {
     try {
       return execFileSync("pnpm", ["--version"], { encoding: "utf8" }).trim();
@@ -820,7 +829,7 @@ program.command("proof").option("--repo <repo>", "repository root", ".").action(
   fs.mkdirSync(proofDir, { recursive: true });
   fs.writeFileSync(path.join(proofDir, "TEST_REPORT.md"), report);
   const events = budgetReport(repoRoot);
-  const logDir = path.join(stateDir(repoRoot), "logs");
+  const logDir = path.join(stateRoot, "logs");
   const latestLog = fs.existsSync(logDir)
     ? fs.readdirSync(logDir).filter((f) => f.includes("test")).sort().at(-1)
     : undefined;
