@@ -108,6 +108,10 @@ Before completion:
 
 `main` must have a clean, conventional history like Strimma and Springa.
 
+- At the start of work on `main`, run `git pull --ff-only origin main` before
+  inspecting files or making claims about current workflow, release, or branch
+  state. If fast-forward is impossible, stop and report the blocker instead of
+  working from stale local state.
 - Use PRs into `main`; do not push feature work directly to `main`.
 - Branch names should describe the work, not the tool. Do not use `codex/...`,
   agent names, or other tool prefixes unless explicitly requested.
