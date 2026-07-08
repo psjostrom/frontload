@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { hookDefinitions } from "../../src/hooks/definitions.js";
 import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
+import { stateExcludeStatus } from "../../src/utils/path.js";
 
 function writeExecutable(dir: string, name = "frontload"): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -25,6 +27,47 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(repo, "AGENTS.md"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(true);
     expect(fs.existsSync(path.join(repo, "codex/config.toml"))).toBe(false);
+  });
+
+  it("adds generated state to local git exclude during init", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-git-"));
+    await execa("git", ["init"], { cwd: repo });
+
+    initProject(repo);
+
+    expect(fs.readFileSync(path.join(repo, ".git/info/exclude"), "utf8")).toContain(".frontload/");
+  });
+
+  it("does not trust arbitrary .git file targets during init", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-malformed-git-"));
+    const repo = path.join(parent, "repo");
+    const outside = path.join(parent, "outside-git");
+    fs.mkdirSync(repo);
+    fs.writeFileSync(path.join(repo, ".git"), "gitdir: ../outside-git\n");
+
+    initProject(repo);
+
+    expect(fs.existsSync(path.join(outside, "info", "exclude"))).toBe(false);
+  });
+
+  it("keeps generated state ignored in linked worktrees", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-worktree-"));
+    const repo = path.join(parent, "repo");
+    const worktree = path.join(parent, "worktree");
+    await execa("git", ["init", repo]);
+    fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
+    await execa("git", ["add", "."], { cwd: repo });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: repo,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    await execa("git", ["worktree", "add", "-b", "worktree-branch", worktree], { cwd: repo });
+
+    initProject(worktree);
+    const status = await execa("git", ["status", "--short"], { cwd: worktree });
+
+    expect(status.stdout).toBe("?? frontload.config.json");
+    expect(stateExcludeStatus(worktree)).toMatchObject({ ignored: true });
   });
 
   it("configures Codex MCP from init", () => {

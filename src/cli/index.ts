@@ -22,7 +22,7 @@ import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, i
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
-import { resolveRepo, stateDir } from "../utils/path.js";
+import { ensureStateDir, resolveRepo, stateDir, stateExcludeStatus } from "../utils/path.js";
 import { packageVersion, packageVersionFrom } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
 import { formatInitOutput, formatUpgradeOutput } from "./init-output.js";
@@ -662,14 +662,22 @@ program.command("doctor")
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     const codex = await codexDogfoodCheck(repoRoot, homeDir);
     const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir, codex) : undefined;
+    const beforeStateExclude = stateExcludeStatus(repoRoot);
     const checks = {
       node: process.versions.node,
       repoRoot,
       config: !!loadConfig(repoRoot),
       writableState: (() => {
-        fs.mkdirSync(stateDir(repoRoot), { recursive: true });
-        fs.writeFileSync(path.join(stateDir(repoRoot), ".doctor"), "ok");
+        fs.writeFileSync(path.join(ensureStateDir(repoRoot), ".doctor"), "ok");
         return true;
+      })(),
+      stateExclude: (() => {
+        const after = stateExcludeStatus(repoRoot);
+        return {
+          ...after,
+          beforeIgnored: beforeStateExclude.ignored,
+          repaired: !beforeStateExclude.ignored && after.ignored
+        };
       })(),
       mcpServer: true,
       codex,
@@ -769,13 +777,13 @@ program.command("run").option("--repo <repo>", "repository root", ".").option("-
   print(measuredResult.output);
 });
 
-program.command("diff").option("--repo <repo>", "repository root", ".").option("--staged").action(async (opts) => {
+program.command("diff").option("--repo <repo>", "repository root", ".").option("--staged").option("--tracked-only", "omit untracked files").action(async (opts) => {
   const repoRoot = resolveRepo(opts.repo);
   const measuredResult = await measured(
     repoRoot,
     "diff",
     opts,
-    () => gitDiffSummary(repoRoot, !!opts.staged),
+    () => gitDiffSummary(repoRoot, { staged: !!opts.staged, trackedOnly: !!opts.trackedOnly }),
     {
       output: (result) => result,
       baseline: (result) => ({ bytes: result.rawDiffBytes, kind: "raw-diff" })
@@ -808,7 +816,8 @@ hook.command("post-tool-use").requiredOption("--host <host>").action(async (opts
 program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => startMcp(resolveRepo(opts.repo)));
 program.command("proof").option("--repo <repo>", "repository root", ".").action((opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  const proofDir = path.join(stateDir(repoRoot), "proof");
+  const stateRoot = ensureStateDir(repoRoot);
+  const proofDir = path.join(stateRoot, "proof");
   const pnpmVersion = (() => {
     try {
       return execFileSync("pnpm", ["--version"], { encoding: "utf8" }).trim();
@@ -820,7 +829,7 @@ program.command("proof").option("--repo <repo>", "repository root", ".").action(
   fs.mkdirSync(proofDir, { recursive: true });
   fs.writeFileSync(path.join(proofDir, "TEST_REPORT.md"), report);
   const events = budgetReport(repoRoot);
-  const logDir = path.join(stateDir(repoRoot), "logs");
+  const logDir = path.join(stateRoot, "logs");
   const latestLog = fs.existsSync(logDir)
     ? fs.readdirSync(logDir).filter((f) => f.includes("test")).sort().at(-1)
     : undefined;

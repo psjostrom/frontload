@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { runSummary } from "../../src/commands/run.js";
 
@@ -11,6 +12,32 @@ describe("command summary", () => {
     expect(result.exitCode).toBe(2);
     expect(result.findings[0].title).toContain("TS1234");
     expect(fs.existsSync(result.fullLogPath)).toBe(true);
+  });
+
+  it("uses a stable log filename when kind is omitted by a caller", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-run-no-kind-"));
+    const result = await runSummary(dir, undefined as never, ["node", "-e", "console.log('ok')"], true);
+
+    expect(path.basename(result.fullLogPath)).not.toContain("undefined");
+    expect(path.basename(result.fullLogPath)).toMatch(/-generic\.log$/);
+    expect(result.kind).toBe("generic");
+  });
+
+  it("keeps generated Frontload state out of git status in a clean repository", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-run-clean-status-"));
+    await execa("git", ["init"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "package.json"), "{}\n");
+    await execa("git", ["add", "."], { cwd: dir });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: dir,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+
+    await runSummary(dir, "generic", ["node", "-e", "console.log('ok')"], true);
+    const status = await execa("git", ["status", "--short"], { cwd: dir });
+
+    expect(status.stdout).toBe("");
+    expect(fs.readFileSync(path.join(dir, ".git", "info", "exclude"), "utf8")).toContain(".frontload/");
   });
 
   it("summarizes failing test output and compresses verbose logs", async () => {

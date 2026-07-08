@@ -116,6 +116,23 @@ describe("e2e proof workflow", () => {
     expect(rawVsSummary.fullLog).toMatch(/^<repo>\/\.frontload\/logs\/.*test\.log$/);
   });
 
+  it("keeps proof-generated state ignored in git status", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-proof-ignore-"));
+    await execa("git", ["init"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
+    await execa("git", ["add", "."], { cwd: repo });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: repo,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+
+    await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "proof", "--repo", repo]);
+    const status = await execa("git", ["status", "--short"], { cwd: repo });
+
+    expect(status.stdout).toBe("");
+    expect(fs.readFileSync(path.join(repo, ".git", "info", "exclude"), "utf8")).toContain(".frontload/");
+  });
+
   it("writes demo fixture dossier under ignored repo state", async () => {
     const fixtureDossier = path.join(fixture, ".frontload/proof/sample-dossier.md");
     fs.rmSync(fixtureDossier, { force: true });
@@ -995,11 +1012,57 @@ describe("e2e proof workflow", () => {
 
   it("keeps plain doctor independent from dogfood validation", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-plain-"));
+    await execa("git", ["init"], { cwd: repo });
     const result = await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "doctor", "--repo", repo]);
     const data = JSON.parse(result.stdout);
 
     expect(data.summary).toBe("doctor completed");
+    expect(data.checks.stateExclude).toMatchObject({
+      ignored: true,
+      repaired: true,
+      beforeIgnored: false,
+      mechanism: ".git/info/exclude",
+      pattern: ".frontload/"
+    });
     expect(data.checks.dogfood).toBeUndefined();
+  });
+
+  it("passes tracked-only through the CLI diff command", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-diff-tracked-only-"));
+    await execa("git", ["init"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "existing.ts"), "export const a = 1;\n");
+    await execa("git", ["add", "."], { cwd: repo });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: repo,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    fs.appendFileSync(path.join(repo, "existing.ts"), "export const b = 2;\n");
+    fs.writeFileSync(path.join(repo, "new.ts"), "export const ignored = true;\n");
+
+    const result = await execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "diff", "--repo", repo, "--tracked-only"]);
+    const data = JSON.parse(result.stdout);
+
+    expect(data.changedFiles.map((file: { path: string }) => file.path)).toEqual(["existing.ts"]);
+    expect(data.summary).not.toContain("untracked");
+  });
+
+  it("passes trackedOnly through the MCP diff handler", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-diff-tracked-only-"));
+    await execa("git", ["init"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "existing.ts"), "export const a = 1;\n");
+    await execa("git", ["add", "."], { cwd: repo });
+    await execa("git", ["commit", "-m", "init"], {
+      cwd: repo,
+      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+    });
+    fs.appendFileSync(path.join(repo, "existing.ts"), "export const b = 2;\n");
+    fs.writeFileSync(path.join(repo, "new.ts"), "export const ignored = true;\n");
+
+    const response = await createMcpHandlers(repo).diff({ staged: false, trackedOnly: true });
+    const data = JSON.parse(response.content[0].text);
+
+    expect(data.changedFiles.map((file: { path: string }) => file.path)).toEqual(["existing.ts"]);
+    expect(data.summary).not.toContain("untracked");
   });
 
   it("formats upgrade refresh-only output instead of emitting raw JSON", async () => {

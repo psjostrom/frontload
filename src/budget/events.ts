@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { BaselineKind, BudgetEvent } from "../types.js";
 import { estimateTokens } from "../utils/text.js";
-import { stateDir } from "../utils/path.js";
+import { ensureStateDir, stateDir } from "../utils/path.js";
 
 export type OperationBudget = {
   outputChars: number;
@@ -51,8 +51,7 @@ export function appendEvent(
   if (hasBaselineBytes !== hasBaselineKind) {
     throw new Error("Measured budget events require both baselineBytes and baselineKind.");
   }
-  const dir = stateDir(repoRoot);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = ensureStateDir(repoRoot);
   const full: BudgetEvent = {
     timestamp: new Date().toISOString(),
     estimatedInputTokens: estimateTokens(event.inputChars),
@@ -129,7 +128,7 @@ export function budgetReport(repoRoot: string): BudgetReport {
     ? "No operations have an exact before/after baseline."
     : netSavedBytes >= 0
       ? `${plural(measuredOperations, "measured operation")} saved ${netSavedBytes} bytes versus baseline.`
-      : `${plural(measuredOperations, "measured operation")} used extra bytes versus baseline (${Math.abs(netSavedBytes)} bytes).`;
+      : `${plural(measuredOperations, "measured operation")} used extra bytes versus baseline (${Math.abs(netSavedBytes)} bytes). This can be normal metadata overhead for small outputs.`;
   const largest = [...events].sort((a, b) => b.outputBytes - a.outputBytes).slice(0, 10);
   return {
     summary: `${measuredSummary} ${plural(unmeasuredOperations, "unmeasured operation")}. Token counts are estimated as chars / 4.`,

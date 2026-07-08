@@ -211,9 +211,9 @@ export function createMcpHandlers(repoRoot: string) {
         return { data, baseline: { bytes: data.rawOutputBytes, kind: "raw-command-output" } };
       }),
 
-    diff: async (input: { staged: boolean }): Promise<McpTextResponse> =>
+    diff: async (input: { staged: boolean; trackedOnly?: boolean }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "diff", input, async () => {
-        const data = await gitDiffSummary(repoRoot, input.staged);
+        const data = await gitDiffSummary(repoRoot, { staged: input.staged, trackedOnly: input.trackedOnly ?? false });
         return { data, baseline: { bytes: data.rawDiffBytes, kind: "raw-diff" } };
       }),
 
@@ -269,7 +269,7 @@ export async function startMcp(repoRoot: string): Promise<void> {
     handlers.read
   );
   server.tool("fl_run_summary", "Run an allowed command and return a summary. Use for tests/typechecks/lint; do not use for interactive commands.", { kind: z.enum(["test", "typecheck", "lint", "generic"]).default("generic"), command: z.string() }, handlers.run);
-  server.tool("fl_git_diff_summary", "Summarize git diff. Use instead of dumping full diffs; not for applying patches.", { staged: z.boolean().default(false) }, handlers.diff);
+  server.tool("fl_git_diff_summary", "Summarize git diff. Use instead of dumping full diffs; not for applying patches.", { staged: z.boolean().default(false), trackedOnly: z.boolean().default(false) }, handlers.diff);
   server.tool("fl_budget_report", "Return budget event totals. Use before/after large work; not a profiler.", {}, handlers.budget);
   server.tool("fl_local_scout", "Optional local model extension point. Use only when configured; do not expect network LLMs.", { prompt: z.string() }, handlers.localScout);
   const transport = new StdioServerTransport();
