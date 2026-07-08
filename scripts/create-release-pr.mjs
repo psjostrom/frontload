@@ -10,8 +10,8 @@ const isDirectRun = path.resolve(process.argv[1] ?? "") === scriptPath;
 
 function usage() {
   return `Usage:
-  pnpm release:pr -- --version 0.1.12
-  pnpm release:pr -- --bump patch
+  pnpm release:pr --version 0.1.12
+  pnpm release:pr --bump patch
 
 Options:
   --version <x.y.z>  Create a release PR for an explicit version.
@@ -26,6 +26,7 @@ export function parseArgs(argv) {
   let explicitBump = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === "--") continue;
     if (arg === "--help" || arg === "-h") return { ...options, help: true };
     if (arg === "--version") {
       options.version = optionValue(argv, i, arg);

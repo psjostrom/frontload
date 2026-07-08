@@ -77,6 +77,10 @@ describe("release PR script helpers", () => {
     expect(() => parseArgs(["--bump", "--remote", "origin"])).toThrow("--bump requires a value");
   });
 
+  it("accepts an npm-style argument separator before options", () => {
+    expect(parseArgs(["--", "--bump", "patch"])).toEqual({ bump: "patch", remote: "origin" });
+  });
+
   it("refreshes main before reading package.json for bump calculation", () => {
     const script = fs.readFileSync(path.resolve("scripts/create-release-pr.mjs"), "utf8");
 
