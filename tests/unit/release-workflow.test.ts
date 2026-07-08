@@ -6,6 +6,7 @@ const publishWorkflowPath = path.resolve(".github/workflows/npm-publish.yml");
 const releasePrWorkflowPath = path.resolve(
   ".github/workflows/create-release-pr.yml",
 );
+const ciWorkflowPath = path.resolve(".github/workflows/ci.yml");
 
 function blockAfterMarker(
   text: string,
@@ -45,6 +46,21 @@ function stepBlock(job: string, stepName: string): string {
 }
 
 describe("npm publish workflow", () => {
+  it("uses Node 24-compatible action versions", () => {
+    const workflows = [
+      fs.readFileSync(ciWorkflowPath, "utf8"),
+      fs.readFileSync(publishWorkflowPath, "utf8"),
+      fs.readFileSync(releasePrWorkflowPath, "utf8"),
+    ].join("\n");
+
+    expect(workflows).not.toContain("actions/checkout@v4");
+    expect(workflows).not.toContain("actions/upload-artifact@v4");
+    expect(workflows).not.toContain("actions/download-artifact@v4");
+    expect(workflows).not.toContain("pnpm/action-setup@v4");
+    expect(workflows).not.toContain("actions/setup-node@v4");
+    expect(workflows).not.toContain("actions/github-script@v7");
+  });
+
   it("checks the npm version before running expensive verification or publishing", () => {
     const workflow = fs.readFileSync(publishWorkflowPath, "utf8");
     const topLevelPermissions = topLevelBlock(workflow, "permissions");
@@ -178,7 +194,7 @@ describe("npm publish workflow", () => {
     expect(prepareStep).toContain('echo "main_sha=$(git rev-parse HEAD)"');
 
     const commitStep = stepBlock(job, "Create verified commit, branch, and PR");
-    expect(commitStep).toContain("actions/github-script");
+    expect(commitStep).toContain("actions/github-script@v9");
     expect(commitStep).toContain(
       "MAIN_SHA: ${{ steps.prepare.outputs.main_sha }}",
     );
