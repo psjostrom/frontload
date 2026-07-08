@@ -27,6 +27,7 @@ import { packageVersion, packageVersionFrom } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
 import { formatInitOutput, formatUpgradeOutput } from "./init-output.js";
 import { parsePositiveInteger } from "./options.js";
+import { applyConfigScopeRadioKey, createConfigScopeRadioState, formatConfigScopeRadioPrompt, selectedConfigScope, type ConfigScopeRadioState } from "./prompts.js";
 
 type ResultMeasurement<T> = {
   output: (result: T) => unknown;
@@ -98,6 +99,13 @@ function renderAgentCheckboxPrompt(output: NodeJS.WriteStream, state: AgentCheck
   return prompt.split("\n").length;
 }
 
+function renderConfigScopeRadioPrompt(output: NodeJS.WriteStream, state: ConfigScopeRadioState, previousLineCount: number): number {
+  if (previousLineCount > 1) output.write(`\x1b[${previousLineCount - 1}F\r\x1b[J`);
+  const prompt = formatConfigScopeRadioPrompt(state);
+  output.write(prompt);
+  return prompt.split("\n").length;
+}
+
 async function promptAgentCheckboxes(initialState: AgentCheckboxState): Promise<AgentName[]> {
   const input = process.stdin;
   const output = process.stdout;
@@ -144,15 +152,49 @@ async function promptAgents(homeDir: string): Promise<ReturnType<typeof parseAge
   return promptAgentCheckboxes(createAgentCheckboxState(detected));
 }
 
+async function promptConfigScopeRadio(initialState: ConfigScopeRadioState): Promise<ConfigScope> {
+  const input = process.stdin;
+  const output = process.stdout;
+  emitKeypressEvents(input);
+  if (input.isTTY) input.setRawMode(true);
+  output.write("\x1b[?25l");
+
+  return new Promise((resolve, reject) => {
+    let state = initialState;
+    let renderedLines = renderConfigScopeRadioPrompt(output, state, 0);
+
+    const cleanup = (): void => {
+      input.off("keypress", onKeypress);
+      if (input.isTTY) input.setRawMode(false);
+      input.pause();
+      output.write("\x1b[?25h\n");
+    };
+    const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        reject(new Error("Prompt cancelled"));
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        const scope = selectedConfigScope(state);
+        cleanup();
+        resolve(scope);
+        return;
+      }
+      const nextState = applyConfigScopeRadioKey(state, key.name ?? _text);
+      if (nextState !== state) {
+        state = nextState;
+        renderedLines = renderConfigScopeRadioPrompt(output, state, renderedLines);
+      }
+    };
+
+    input.on("keypress", onKeypress);
+  });
+}
+
 async function promptConfigScope(): Promise<ConfigScope> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return "project";
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question("Where should Claude Code MCP config be written? [project/global] (project): ");
-    return parseConfigScope(answer.trim() || "project");
-  } finally {
-    rl.close();
-  }
+  return promptConfigScopeRadio(createConfigScopeRadioState());
 }
 
 async function promptApproveGlobalInstall(commandText: string): Promise<boolean> {
