@@ -3,9 +3,12 @@ import {
   branchNameForVersion,
   findPreviousReleaseRef,
   formatReleasePrBody,
+  parseArgs,
   prTitleForVersion,
   resolveTargetVersion
 } from "../../scripts/create-release-pr.mjs";
+import fs from "node:fs";
+import path from "node:path";
 
 describe("release PR script helpers", () => {
   it("resolves explicit and bumped target versions", () => {
@@ -56,5 +59,18 @@ describe("release PR script helpers", () => {
     expect(body).toContain("- `c1f4da8` fix: improve frontload agent reporting (#32)");
     expect(body).toContain("- `c25f638` fix: improve Frontload repo binding and search relevance (#31)");
     expect(body).toContain("- [ ] Merge this PR to trigger `.github/workflows/npm-publish.yml`.");
+  });
+
+  it("rejects missing option values instead of falling back to a patch bump", () => {
+    expect(() => parseArgs(["--version"])).toThrow("--version requires a value");
+    expect(() => parseArgs(["--bump", "--remote", "origin"])).toThrow("--bump requires a value");
+  });
+
+  it("refreshes main before reading package.json for bump calculation", () => {
+    const script = fs.readFileSync(path.resolve("scripts/create-release-pr.mjs"), "utf8");
+
+    expect(script.indexOf('run("git", ["pull", "--ff-only", options.remote, base]')).toBeLessThan(
+      script.indexOf("const packageJson = readPackageJson(repoRoot)")
+    );
   });
 });

@@ -6,7 +6,7 @@ const publishWorkflowPath = path.resolve(".github/workflows/npm-publish.yml");
 const releasePrWorkflowPath = path.resolve(".github/workflows/create-release-pr.yml");
 
 describe("npm publish workflow", () => {
-  it("publishes from main with npm trusted publishing instead of a long-lived token", () => {
+  it("checks the npm version before running expensive verification or publishing", () => {
     const workflow = fs.readFileSync(publishWorkflowPath, "utf8");
 
     expect(workflow).toContain("name: Publish npm package");
@@ -19,8 +19,17 @@ describe("npm publish workflow", () => {
     expect(workflow).toContain("registry-url: https://registry.npmjs.org");
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("package-manager-cache: false");
-    expect(workflow).toContain("npm publish --access public");
-    expect(workflow).toContain("npm view frontload@${PACKAGE_VERSION} version");
+    expect(workflow).toContain("check-version:");
+    expect(workflow).toContain("should_publish: ${{ steps.check.outputs.should_publish }}");
+    expect(workflow).toContain("verify:");
+    expect(workflow).toContain("publish:");
+    expect(workflow).toContain("if: needs.check-version.outputs.should_publish == 'true'");
+    expect(workflow).toContain("npm view \"frontload@${PACKAGE_VERSION}\" version");
+    expect(workflow).toContain("grep -q \"E404\" npm-view.err");
+    expect(workflow).toContain("npm publish npm-package/frontload-*.tgz --access public");
+    expect(workflow.indexOf("Check npm version")).toBeLessThan(workflow.indexOf("Install dependencies"));
+    expect(workflow.indexOf("id-token: write")).toBeGreaterThan(workflow.indexOf("publish:"));
+    expect(workflow.indexOf("id-token: write")).toBeGreaterThan(workflow.indexOf("verify:"));
     expect(workflow).not.toContain("NPM_TOKEN");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN");
   });
@@ -36,8 +45,10 @@ describe("npm publish workflow", () => {
     expect(workflow).toContain("GH_TOKEN: ${{ github.token }}");
     expect(workflow).toContain("VERSION_INPUT: ${{ inputs.version }}");
     expect(workflow).toContain("BUMP_INPUT: ${{ inputs.bump }}");
-    expect(workflow).toContain('pnpm release:pr -- --version "$VERSION_INPUT"');
-    expect(workflow).toContain('pnpm release:pr -- --bump "$BUMP_INPUT"');
+    expect(workflow).toContain('node scripts/create-release-pr.mjs --version "$VERSION_INPUT"');
+    expect(workflow).toContain('node scripts/create-release-pr.mjs --bump "$BUMP_INPUT"');
+    expect(workflow).not.toContain("pnpm install");
+    expect(workflow).not.toContain("pnpm/action-setup");
     expect(workflow).not.toContain("npm publish");
     expect(workflow).not.toContain("NPM_TOKEN");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN");

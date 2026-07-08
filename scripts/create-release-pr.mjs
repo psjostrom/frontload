@@ -16,38 +16,44 @@ function usage() {
 Options:
   --version <x.y.z>  Create a release PR for an explicit version.
   --bump <kind>      Bump the current package version by patch, minor, or major. Defaults to patch.
-  --base <branch>    Base branch for the release PR. Defaults to main.
   --remote <name>    Git remote to fetch and push. Defaults to origin.
   --help             Show this help text.`;
 }
 
 export function parseArgs(argv) {
-  const options = { bump: "patch", base: "main", remote: "origin" };
+  const options = { bump: "patch", remote: "origin" };
+  let explicitBump = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") return { ...options, help: true };
     if (arg === "--version") {
-      options.version = argv[++i];
+      options.version = optionValue(argv, i, arg);
+      i += 1;
       continue;
     }
     if (arg === "--bump") {
-      options.bump = argv[++i];
-      continue;
-    }
-    if (arg === "--base") {
-      options.base = argv[++i];
+      options.bump = optionValue(argv, i, arg);
+      explicitBump = true;
+      i += 1;
       continue;
     }
     if (arg === "--remote") {
-      options.remote = argv[++i];
+      options.remote = optionValue(argv, i, arg);
+      i += 1;
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
-  if (options.version && argv.includes("--bump")) {
+  if (options.version && explicitBump) {
     throw new Error("Use either --version or --bump, not both.");
   }
   return options;
+}
+
+function optionValue(argv, index, option) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${option} requires a value.`);
+  return value;
 }
 
 export function resolveTargetVersion({ currentVersion, version, bump = "patch" }) {
@@ -167,10 +173,17 @@ function writeBodyFile(body) {
 
 export function createReleasePr({ repoRoot = process.cwd(), argv = process.argv.slice(2) } = {}) {
   const options = parseArgs(argv);
+  const base = "main";
   if (options.help) {
     console.log(usage());
     return;
   }
+
+  ensureCleanWorktree(repoRoot);
+
+  run("git", ["fetch", options.remote, base, "--prune"], { cwd: repoRoot });
+  run("git", ["switch", base], { cwd: repoRoot });
+  run("git", ["pull", "--ff-only", options.remote, base], { cwd: repoRoot });
 
   const packageJson = readPackageJson(repoRoot);
   const version = resolveTargetVersion({
@@ -181,26 +194,21 @@ export function createReleasePr({ repoRoot = process.cwd(), argv = process.argv.
   const branch = branchNameForVersion(version);
   const title = prTitleForVersion(version);
 
-  ensureCleanWorktree(repoRoot);
-
-  run("git", ["fetch", options.remote, options.base, "--prune"], { cwd: repoRoot });
-  run("git", ["switch", options.base], { cwd: repoRoot });
-  run("git", ["pull", "--ff-only", options.remote, options.base], { cwd: repoRoot });
   run("git", ["switch", "-c", branch], { cwd: repoRoot });
   run("npm", ["version", version, "--no-git-tag-version"], { cwd: repoRoot });
 
   const previousRef = findPreviousReleaseRef({
     tags: semverTags(repoRoot),
-    releaseCommits: previousReleaseCommits(repoRoot, options.base)
+    releaseCommits: previousReleaseCommits(repoRoot, base)
   });
-  const commits = previousRef ? gitLog(repoRoot, `${previousRef}..${options.base}`) : gitLog(repoRoot, options.base);
+  const commits = previousRef ? gitLog(repoRoot, `${previousRef}..${base}`) : gitLog(repoRoot, base);
   const body = formatReleasePrBody({ version, previousRef, commits });
   const bodyFile = writeBodyFile(body);
 
   run("git", ["add", "package.json"], { cwd: repoRoot });
   run("git", ["commit", "-m", title], { cwd: repoRoot });
   run("git", ["push", "-u", options.remote, branch], { cwd: repoRoot });
-  run("gh", ["pr", "create", "--base", options.base, "--head", branch, "--title", title, "--body-file", bodyFile], {
+  run("gh", ["pr", "create", "--base", base, "--head", branch, "--title", title, "--body-file", bodyFile], {
     cwd: repoRoot
   });
 }

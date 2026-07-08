@@ -32,19 +32,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Configure git author
         run: |
@@ -58,7 +49,7 @@ jobs:
           BUMP_INPUT: ${{ inputs.bump }}
         run: |
           if [ -n "$VERSION_INPUT" ]; then
-            pnpm release:pr -- --version "$VERSION_INPUT"
+            node scripts/create-release-pr.mjs --version "$VERSION_INPUT"
           else
-            pnpm release:pr -- --bump "$BUMP_INPUT"
+            node scripts/create-release-pr.mjs --bump "$BUMP_INPUT"
           fi

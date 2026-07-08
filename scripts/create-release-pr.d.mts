@@ -10,5 +10,6 @@ export function formatReleasePrBody(options: {
   previousRef: string | null;
   commits: ReleaseCommit[];
 }): string;
+export function parseArgs(argv: string[]): { bump: string; remote: string; version?: string; help?: boolean };
 export function prTitleForVersion(version: string): string;
 export function resolveTargetVersion(options: { currentVersion: string; version?: string; bump?: string }): string;

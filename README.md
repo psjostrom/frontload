@@ -273,39 +273,6 @@ it. If that global entry points at a missing absolute path or a stale path
 containing only `.frontload` state, run `frontload upgrade --repo .` from the
 repo you want Codex to use.
 
-## Release Publishing
-
-Frontload publishes npm releases from `.github/workflows/npm-publish.yml` on
-`main`. The workflow uses npm trusted publishing with GitHub Actions OIDC, so it
-does not need an `NPM_TOKEN` or another long-lived publish secret.
-
-Configure the package once on npmjs.com under
-`frontload` → Settings → Trusted Publisher:
-
-- Publisher: GitHub Actions
-- Organization or user: `psjostrom`
-- Repository: `frontload`
-- Workflow filename: `npm-publish.yml`
-- Allowed action: `npm publish`
-
-After that setup, create a release PR with either the manual GitHub Action
-`Create release PR` or the repo-local script:
-
-```bash
-pnpm release:pr -- --bump patch
-pnpm release:pr -- --version 0.1.12
-```
-
-The script fetches fresh `origin/main`, creates a `release-<version>` branch,
-bumps `package.json`, generates PR release notes from commits since the previous
-release tag or release commit, pushes the branch, and opens a conventional
-release PR. The local script expects a clean worktree and an authenticated
-GitHub CLI. Review and merge the PR to `main`. The publish workflow then installs
-dependencies, runs the same lint/build/test/plugin validation checks as CI, skips
-versions that already exist on npm, and publishes the new version from `main`.
-Once trusted publishing works, npm recommends disallowing traditional
-token-based publishing for the package.
-
 ## CLI Reference
 
 ### `init`
