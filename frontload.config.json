@@ -1,0 +1,80 @@
+{
+  "repoRoot": ".",
+  "ignore": [
+    "node_modules/**",
+    "**/node_modules/**",
+    ".git/**",
+    "**/.git/**",
+    "dist/**",
+    "**/dist/**",
+    "build/**",
+    "**/build/**",
+    "coverage/**",
+    "**/coverage/**",
+    ".next/**",
+    "**/.next/**",
+    "out/**",
+    "**/out/**",
+    ".turbo/**",
+    "**/.turbo/**",
+    ".cache/**",
+    "**/.cache/**",
+    ".expo/**",
+    "**/.expo/**",
+    ".Codex/**",
+    "**/.Codex/**",
+    ".codex/**",
+    "**/.codex/**",
+    ".gradle/**",
+    "**/.gradle/**",
+    "Pods/**",
+    "**/Pods/**",
+    "**/.env*",
+    "**/*.local.md",
+    "**/*.lock",
+    "*.tsbuildinfo",
+    "**/*.tsbuildinfo",
+    ".frontload/**",
+    "**/.frontload/**"
+  ],
+  "index": {
+    "maxFileBytes": 300000,
+    "extensions": [".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".kt", ".kts"]
+  },
+  "budgets": {
+    "defaultDossierChars": 6000,
+    "defaultReadChars": 4000,
+    "maxToolOutputChars": 8000,
+    "maxRawLogBytes": 5000000
+  },
+  "commands": {
+    "allowed": [
+      "pnpm test",
+      "pnpm vitest",
+      "pnpm tsc",
+      "npm test",
+      "yarn test",
+      "npx tsc",
+      "git diff",
+      "git status"
+    ],
+    "timeoutMs": 120000
+  },
+  "security": {
+    "redactSecrets": true,
+    "blockDangerousShell": true
+  },
+  "localScout": {
+    "enabled": false,
+    "command": null,
+    "timeoutMs": 60000,
+    "maxOutputChars": 6000
+  },
+  "gate": {
+    "enabled": true,
+    "rewriteCommands": true,
+    "blockBroadShell": true,
+    "blockNoisyReads": true,
+    "maxReadLines": 200
+  }
+}
