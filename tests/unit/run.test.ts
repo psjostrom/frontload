@@ -181,6 +181,7 @@ describe("command summary", () => {
     const result = await runSummary(dir, "typecheck", ["node", "-e", `console.error(${JSON.stringify(output)}); process.exit(2)`], true);
 
     expect(result.exitCode).toBe(2);
+    expect(result.findings.some((finding) => finding.severity === "error")).toBe(true);
     expect(result.findings.some((finding) =>
       finding.title.includes("Next.js generated types may be transient") &&
       finding.detail?.includes("If a Next.js build is running concurrently")

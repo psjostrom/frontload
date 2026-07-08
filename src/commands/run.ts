@@ -108,7 +108,7 @@ function parsePnpmFindings(output: string, findings: Finding[]): void {
 function parseNextTypeFindings(output: string, findings: Finding[]): void {
   if (!/\bTS6053\b/.test(output) || !/\.next[/\\]types/.test(output)) return;
   pushUnique(findings, {
-    severity: "info",
+    severity: "error",
     title: "Next.js generated types may be transient during a concurrent build",
     detail: "If a Next.js build is running concurrently, rerun after it completes; `.next/types` may be transient."
   });

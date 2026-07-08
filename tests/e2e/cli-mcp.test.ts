@@ -618,7 +618,10 @@ describe("e2e proof workflow", () => {
   it("treats a successful bounded policy probe as responsive without recording budget events", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-bin-"));
     const cli = path.resolve("dist/src/cli/index.js");
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as { version: string };
+    writeInstalledFrontloadPackage(bin, pkg.version);
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
       budgets: {
         maxToolOutputChars: 64
@@ -633,7 +636,12 @@ describe("e2e proof workflow", () => {
       ""
     ].join("\n"));
 
-    const result = await execa(process.execPath, [cli, "doctor", "--repo", repo, "--home", home]);
+    const result = await execa(process.execPath, [cli, "doctor", "--repo", repo, "--home", home], {
+      env: {
+        ...process.env,
+        PATH: bin
+      }
+    });
     const data = JSON.parse(result.stdout);
 
     expect(data.checks.codex).toMatchObject({
@@ -643,8 +651,12 @@ describe("e2e proof workflow", () => {
     });
     expect(data.checks.installedCommand).toMatchObject({
       command: "frontload",
-      available: expect.any(Boolean)
+      available: true,
+      version: pkg.version,
+      matchesCurrentVersion: true,
+      regularInstall: true
     });
+    expect(data.checks.dogfood).toBeUndefined();
     expect(readEvents(repo).filter((event) => event.operation === "policy")).toEqual([]);
   });
 
