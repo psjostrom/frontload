@@ -23,6 +23,9 @@ so concurrent Codex agents in different repos do not collide on one global
 Restart Codex after init. Codex reads MCP servers from project `.codex/config.toml`
 for trusted projects, so each initialized repo can have its own Frontload MCP
 entry. Init also copies the Frontload skill to `~/.codex/skills/frontload`.
+After restart, use Codex normally; the skill tells Codex to call Frontload MCP
+tools for dossiers, search, bounded reads, summarized commands, and diff
+summaries before broad raw exploration.
 
 Add `.codex/` to `.gitignore` unless your team intentionally wants to share
 project-local Codex config. Frontload pins the MCP server to an absolute repo

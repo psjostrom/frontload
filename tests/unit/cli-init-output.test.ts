@@ -55,6 +55,7 @@ describe("init output formatting", () => {
     expect(output).toContain("Next steps");
     expect(output).toContain("1. Restart Codex.");
     expect(output).toContain("Open /hooks to review and approve");
+    expect(output).toContain("Use Codex normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.");
     expect(output).not.toContain("\"globalInstall\"");
   });
 
@@ -85,6 +86,17 @@ describe("init output formatting", () => {
 
     expect(output).toContain("Restart Codex and Claude Code.");
     expect(output).toContain("Run /mcp in each editor");
+    expect(output).toContain("Use your agents normally; the Frontload skills tell them to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.");
+  });
+
+  it("includes agent-first next steps for Claude-only setup", () => {
+    const output = formatInitOutput({
+      agents: [{ agent: "claude", writes: [], notes: [] }]
+    });
+
+    expect(output).toContain("Restart Claude Code.");
+    expect(output).toContain("Run /mcp and confirm frontload is listed.");
+    expect(output).toContain("Use Claude Code normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.");
   });
 });
 

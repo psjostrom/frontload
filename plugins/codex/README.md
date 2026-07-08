@@ -25,6 +25,10 @@ into `~/.codex/hooks.json`.
 Restart Codex after init. Open `/hooks` once to review and approve the command
 hooks.
 
+After that, use Codex normally. The installed Frontload skill tells Codex to use
+MCP dossiers, search, budgeted reads, command summaries, diff summaries, and
+budget reports before broad raw exploration.
+
 Add `.codex/` to `.gitignore` unless your team intentionally wants to share
 project-local Codex config. Frontload pins the MCP server to an absolute repo
 path in that file.
@@ -44,7 +48,9 @@ When setup is complete, Codex can call Frontload MCP tools for:
 - diff summaries
 - budget reports
 
-The skill tells Codex to prefer those tools before broad raw exploration.
+Codex does not need a manual `frontload index` step before each task. The MCP
+dossier and search tools build the repo index when it is missing and refresh
+changed files automatically.
 
 The hooks enforce Frontload rewrites and output caps for interceptable Bash
 calls in initialized repositories. They are stored globally, but their command

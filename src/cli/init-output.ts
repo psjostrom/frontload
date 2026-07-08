@@ -91,20 +91,23 @@ function nextSteps(result: InitOutput): string[] {
     return [
       "  1. Restart Codex and Claude Code.",
       "  2. Run /mcp in each editor and confirm frontload is listed.",
-      "  3. In Codex, open /hooks to review and approve the Frontload command hooks."
+      "  3. In Codex, open /hooks to review and approve the Frontload command hooks.",
+      "  4. Use your agents normally; the Frontload skills tell them to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration."
     ];
   }
   if (agents.includes("codex")) {
     return [
       "  1. Restart Codex.",
       "  2. Run /mcp and confirm frontload is listed.",
-      "  3. Open /hooks to review and approve the Frontload command hooks."
+      "  3. Open /hooks to review and approve the Frontload command hooks.",
+      "  4. Use Codex normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration."
     ];
   }
   if (agents.includes("claude")) {
     return [
       "  1. Restart Claude Code.",
-      "  2. Run /mcp and confirm frontload is listed."
+      "  2. Run /mcp and confirm frontload is listed.",
+      "  3. Use Claude Code normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration."
     ];
   }
   return [

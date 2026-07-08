@@ -6,7 +6,9 @@ Add a safe prefix to `commands.allowed` in `frontload.config.json`, or use `--al
 
 ## Dossier is empty
 
-Run `frontload index --repo .` first and make the task description include concrete file, domain, or symbol words.
+Use more concrete file, domain, symbol, or error words. Dossier and search calls
+build or refresh the index automatically. If results stay empty, run
+`frontload doctor --repo .` to verify setup.
 
 ## Codex config key rejected
 

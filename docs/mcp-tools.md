@@ -1,20 +1,27 @@
 # MCP Tools
 
-Frontload exposes MCP tools so supported agents can use the same bounded
-workflow as the CLI. Most users get these tools by running:
+Frontload exposes MCP tools so supported agents can use bounded repo context
+without a manual daily CLI routine. Most users get these tools by running:
 
 ```bash
 npx frontload init
 ```
 
 Restart your editor after init so the MCP client loads the new server config.
+Then use your agent normally. The installed Frontload skill tells the agent to
+start broad repo work with dossiers and search, read bounded file windows, run
+noisy commands through summaries, and inspect compact diffs.
+
+You do not need to run `frontload index` before each task. `fl_repo_dossier` and
+`fl_search` build the repo index when it is missing and refresh changed files
+automatically.
 
 Tools:
 
 - `fl_policy`
-- `fl_repo_index`
-- `fl_repo_dossier`
-- `fl_search`
+- `fl_repo_index`: manually refreshes the repo index
+- `fl_repo_dossier`: ranks likely files and tests for a task
+- `fl_search`: searches indexed paths, symbols, imports, and bounded content
 - `fl_read_budgeted`
 - `fl_run_summary`
 - `fl_git_diff_summary`
