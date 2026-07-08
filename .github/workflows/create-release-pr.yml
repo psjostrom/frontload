@@ -68,11 +68,15 @@ jobs:
               'utf8'
             );
 
-            // Use the SHA of the checked-out commit so the API commit
-            // is always consistent with the workspace state.
-            const mainSha = context.sha;
+            // Use the current main branch head as the base for the release commit.
+            const { data: mainRef } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/main',
+            });
+            const mainSha = mainRef.object.sha;
 
-            // Get the base tree SHA from the checked-out commit
+            // Get the base tree SHA from main
             const { data: mainCommit } = await github.rest.git.getCommit({
               owner: context.repo.owner,
               repo: context.repo.repo,
