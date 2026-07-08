@@ -3,11 +3,20 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const publishWorkflowPath = path.resolve(".github/workflows/npm-publish.yml");
-const releasePrWorkflowPath = path.resolve(".github/workflows/create-release-pr.yml");
+const releasePrWorkflowPath = path.resolve(
+  ".github/workflows/create-release-pr.yml",
+);
 
-function blockAfterMarker(text: string, marker: string, nextSibling: RegExp): string {
+function blockAfterMarker(
+  text: string,
+  marker: string,
+  nextSibling: RegExp,
+): string {
   const start = text.indexOf(marker);
-  expect(start, `Missing workflow block marker: ${marker.trim()}`).toBeGreaterThanOrEqual(0);
+  expect(
+    start,
+    `Missing workflow block marker: ${marker.trim()}`,
+  ).toBeGreaterThanOrEqual(0);
 
   const bodyStart = start + marker.length;
   nextSibling.lastIndex = bodyStart;
@@ -16,7 +25,11 @@ function blockAfterMarker(text: string, marker: string, nextSibling: RegExp): st
 }
 
 function topLevelBlock(workflow: string, key: string): string {
-  return blockAfterMarker(workflow, `${key}:\n`, /^[A-Za-z][A-Za-z0-9_-]*:\n/gm);
+  return blockAfterMarker(
+    workflow,
+    `${key}:\n`,
+    /^[A-Za-z][A-Za-z0-9_-]*:\n/gm,
+  );
 }
 
 function jobBlock(workflow: string, job: string): string {
@@ -24,7 +37,11 @@ function jobBlock(workflow: string, job: string): string {
 }
 
 function stepBlock(job: string, stepName: string): string {
-  return blockAfterMarker(job, `      - name: ${stepName}\n`, /^      - name: /gm);
+  return blockAfterMarker(
+    job,
+    `      - name: ${stepName}\n`,
+    /^      - name: /gm,
+  );
 }
 
 describe("npm publish workflow", () => {
@@ -44,53 +61,93 @@ describe("npm publish workflow", () => {
     expect(topLevelPermissions).not.toContain("id-token");
 
     expect(checkVersion).toContain("if: github.ref == 'refs/heads/main'");
-    expect(checkVersion).toContain("should_publish: ${{ steps.check.outputs.should_publish }}");
-    expect(stepBlock(checkVersion, "Set up Node")).toContain("registry-url: https://registry.npmjs.org");
-    expect(stepBlock(checkVersion, "Set up Node")).toContain("node-version: 24");
-    expect(stepBlock(checkVersion, "Set up Node")).toContain("package-manager-cache: false");
-    expect(stepBlock(checkVersion, "Check npm version")).toContain(
-      'npm view "frontload@${PACKAGE_VERSION}" version > npm-view.out 2> npm-view.err'
+    expect(checkVersion).toContain(
+      "should_publish: ${{ steps.check.outputs.should_publish }}",
     );
-    expect(stepBlock(checkVersion, "Check npm version")).toContain('grep -q "E404" npm-view.err');
+    expect(stepBlock(checkVersion, "Set up Node")).toContain(
+      "registry-url: https://registry.npmjs.org",
+    );
+    expect(stepBlock(checkVersion, "Set up Node")).toContain(
+      "node-version: 24",
+    );
+    expect(stepBlock(checkVersion, "Set up Node")).toContain(
+      "package-manager-cache: false",
+    );
+    expect(stepBlock(checkVersion, "Check npm version")).toContain(
+      'npm view "frontload@${PACKAGE_VERSION}" version > npm-view.out 2> npm-view.err',
+    );
+    expect(stepBlock(checkVersion, "Check npm version")).toContain(
+      'grep -q "E404" npm-view.err',
+    );
     expect(stepBlock(checkVersion, "Check npm version")).toContain("exit 1");
     expect(checkVersion).not.toContain("pnpm install");
     expect(checkVersion).not.toContain("npm publish");
 
     expect(verify).toContain("needs: check-version");
-    expect(verify).toContain("if: needs.check-version.outputs.should_publish == 'true'");
+    expect(verify).toContain(
+      "if: needs.check-version.outputs.should_publish == 'true'",
+    );
     expect(verify).toContain("permissions:\n      contents: read");
     expect(verify).not.toContain("id-token");
-    expect(stepBlock(verify, "Install dependencies")).toContain("pnpm install --frozen-lockfile");
+    expect(stepBlock(verify, "Install dependencies")).toContain(
+      "pnpm install --frozen-lockfile",
+    );
     expect(stepBlock(verify, "Lint")).toContain("pnpm lint");
     expect(stepBlock(verify, "Build")).toContain("pnpm build");
     expect(stepBlock(verify, "Unit tests")).toContain("pnpm test");
     expect(stepBlock(verify, "E2E tests")).toContain("pnpm e2e");
     expect(stepBlock(verify, "Validate bundled plugins")).toContain(
-      "node dist/src/cli/index.js validate-plugins --repo ."
+      "node dist/src/cli/index.js validate-plugins --repo .",
     );
-    expect(stepBlock(verify, "Pack npm package")).toContain("npm pack --pack-destination .release");
-    expect(stepBlock(verify, "Upload npm package")).toContain("path: .release/frontload-*.tgz");
-    expect(stepBlock(verify, "Upload npm package")).toContain("include-hidden-files: true");
+    expect(stepBlock(verify, "Pack npm package")).toContain(
+      "npm pack --pack-destination .release",
+    );
+    expect(stepBlock(verify, "Upload npm package")).toContain(
+      "path: .release/frontload-*.tgz",
+    );
+    expect(stepBlock(verify, "Upload npm package")).toContain(
+      "include-hidden-files: true",
+    );
 
     expect(publish).toContain("needs:\n      - check-version\n      - verify");
-    expect(publish).toContain("if: needs.check-version.outputs.should_publish == 'true'");
-    expect(publish).toContain("permissions:\n      contents: read\n      id-token: write");
-    expect(stepBlock(publish, "Download npm package")).toContain("name: npm-package");
-    expect(stepBlock(publish, "Set up Node")).toContain("registry-url: https://registry.npmjs.org");
-    expect(stepBlock(publish, "Publish to npm")).toContain("npm publish npm-package/frontload-*.tgz --access public");
+    expect(publish).toContain(
+      "if: needs.check-version.outputs.should_publish == 'true'",
+    );
+    expect(publish).toContain(
+      "permissions:\n      contents: read\n      id-token: write",
+    );
+    expect(stepBlock(publish, "Download npm package")).toContain(
+      "name: npm-package",
+    );
+    expect(stepBlock(publish, "Set up Node")).toContain(
+      "registry-url: https://registry.npmjs.org",
+    );
+    expect(stepBlock(publish, "Publish to npm")).toContain(
+      "npm publish ./npm-package/frontload-*.tgz --access public",
+    );
     expect(publish).not.toContain("pnpm install");
     expect(publish).not.toContain("pnpm test");
 
     const githubRelease = jobBlock(workflow, "github-release");
-    expect(githubRelease).toContain("needs:\n      - check-version\n      - publish");
-    expect(githubRelease).toContain("if: needs.check-version.outputs.should_publish == 'true'");
-    expect(githubRelease).toContain("permissions:\n      contents: write");
-    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain("GH_TOKEN: ${{ github.token }}");
-    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain(
-      'gh release create "v${PACKAGE_VERSION}"'
+    expect(githubRelease).toContain(
+      "needs:\n      - check-version\n      - publish",
     );
-    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain("--generate-notes");
-    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain('--target "$GITHUB_SHA"');
+    expect(githubRelease).toContain(
+      "if: needs.check-version.outputs.should_publish == 'true'",
+    );
+    expect(githubRelease).toContain("permissions:\n      contents: write");
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain(
+      "GH_TOKEN: ${{ github.token }}",
+    );
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain(
+      'gh release create "v${PACKAGE_VERSION}"',
+    );
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain(
+      "--generate-notes",
+    );
+    expect(stepBlock(githubRelease, "Create GitHub release and tag")).toContain(
+      '--target "$GITHUB_SHA"',
+    );
 
     expect(workflow).not.toContain("NPM_TOKEN");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN");
@@ -112,13 +169,19 @@ describe("npm publish workflow", () => {
     const prepareStep = stepBlock(job, "Prepare release metadata");
     expect(prepareStep).toContain("VERSION_INPUT: ${{ inputs.version }}");
     expect(prepareStep).toContain("BUMP_INPUT: ${{ inputs.bump }}");
-    expect(prepareStep).toContain('node scripts/create-release-pr.mjs --prepare --version "$VERSION_INPUT"');
-    expect(prepareStep).toContain('node scripts/create-release-pr.mjs --prepare --bump "$BUMP_INPUT"');
+    expect(prepareStep).toContain(
+      'node scripts/create-release-pr.mjs --prepare --version "$VERSION_INPUT"',
+    );
+    expect(prepareStep).toContain(
+      'node scripts/create-release-pr.mjs --prepare --bump "$BUMP_INPUT"',
+    );
     expect(prepareStep).toContain('echo "main_sha=$(git rev-parse HEAD)"');
 
     const commitStep = stepBlock(job, "Create verified commit, branch, and PR");
     expect(commitStep).toContain("actions/github-script");
-    expect(commitStep).toContain("MAIN_SHA: ${{ steps.prepare.outputs.main_sha }}");
+    expect(commitStep).toContain(
+      "MAIN_SHA: ${{ steps.prepare.outputs.main_sha }}",
+    );
     expect(commitStep).toContain("process.env.MAIN_SHA");
     expect(commitStep).toContain("github.rest.git.createCommit");
     expect(commitStep).toContain("github.rest.pulls.create");

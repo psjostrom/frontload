@@ -135,7 +135,7 @@ jobs:
           package-manager-cache: false
 
       - name: Publish to npm
-        run: npm publish npm-package/frontload-*.tgz --access public
+        run: npm publish ./npm-package/frontload-*.tgz --access public
 
   github-release:
     name: github-release
