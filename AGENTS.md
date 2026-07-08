@@ -49,6 +49,7 @@ excessive CPU/RAM during Frontload development as product bugs to investigate,
 not as ordinary workflow noise.
 
 Prefer:
+
 - `fl_search` over broad grep
 - `fl_read_budgeted` over raw full-file reads
 - `fl_run_summary` over raw test/typecheck commands
@@ -97,6 +98,7 @@ Any user-visible CLI, config, plugin, hook, MCP, or install-flow change is not
 done until docs are checked.
 
 Before completion:
+
 1. Search `README.md`, `docs/`, `AGENTS.md`, `plugins/*/README.md`,
    `skills/frontload/SKILL.md`, and `plugins/*/skills/frontload/SKILL.md` for
    references to the changed behavior.
@@ -153,7 +155,7 @@ Npm publishing runs from `.github/workflows/npm-publish.yml` after release
 version bumps reach `main`. The workflow uses npm trusted publishing with GitHub
 Actions OIDC; do not add long-lived `NPM_TOKEN` or `NODE_AUTH_TOKEN` publish
 secrets. Create release bump PRs with `.github/workflows/create-release-pr.yml`
-or `pnpm release:pr -- --bump patch`; review and merge the PR to trigger
+or `pnpm release:pr --bump patch`; review and merge the PR to trigger
 publishing.
 
 ## Security
