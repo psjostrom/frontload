@@ -49,13 +49,14 @@ The Frontload hooks are stored globally, but their command first checks for a
 Frontload initialization exit before starting the `frontload` CLI.
 
 Run `frontload doctor --repo .` to verify the active config. Doctor reports
-whether Codex is using project or global config, whether the configured MCP
-command launches, and whether it answers `fl_policy`. If doctor passes but a
-running Codex session still reports `Transport closed`, restart Codex so it
-reloads its MCP process. If doctor reports `legacyGlobalConflict`, an older
-global `~/.codex/config.toml` Frontload entry points at another repo; prefer the
-project `.codex/config.toml` entry for new work. If that global entry points at
-a missing absolute path or a stale path containing only `.frontload` state, run
-`frontload upgrade --repo .` from the repo you want Codex to use.
+whether the `frontload` CLI is installed, whether Codex is using project or
+global config, whether the configured MCP command launches, and whether it
+answers `fl_policy`. If doctor passes but a running Codex session still reports
+`Transport closed`, restart Codex so it reloads its MCP process. If doctor
+reports `legacyGlobalConflict`, an older global `~/.codex/config.toml`
+Frontload entry points at another repo; prefer the project `.codex/config.toml`
+entry for new work. If that global entry points at a missing absolute path or a
+stale path containing only `.frontload` state, run `frontload upgrade --repo .`
+from the repo you want Codex to use.
 
 If your Codex version rejects `required`, `enabled_tools`, or `default_tools_approval_mode`, remove that key and keep the MCP command and args.

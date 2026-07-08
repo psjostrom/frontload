@@ -680,6 +680,7 @@ program.command("doctor")
         };
       })(),
       mcpServer: true,
+      installedCommand: installedFrontloadCheck(repoRoot),
       codex,
       platform: os.platform(),
       ...(dogfood ? { dogfood } : {})

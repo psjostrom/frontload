@@ -155,6 +155,38 @@ describe("command summary", () => {
     expect(result.findings[0].title).toContain("E0308");
   });
 
+  it("explains pnpm ignored-builds failures", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-pnpm-ignored-builds-"));
+    const output = [
+      "ERR_PNPM_IGNORED_BUILDS Command failed with exit code 1.",
+      "Ignored build scripts: esbuild.",
+      "Run \"pnpm approve-builds\" to pick which dependencies should be allowed to run scripts."
+    ].join("\n");
+
+    const result = await runSummary(dir, "typecheck", ["node", "-e", `console.error(${JSON.stringify(output)}); process.exit(1)`], true);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.findings[0]).toMatchObject({
+      severity: "error",
+      title: "pnpm blocked dependency build scripts before the requested command ran"
+    });
+    expect(result.findings[0].detail).toContain("pnpm approve-builds");
+    expect(result.findings[0].detail).toContain("local binary directly");
+  });
+
+  it("explains transient Next.js generated type races", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-next-types-race-"));
+    const output = "error TS6053: File '.next/types/app/page.ts' not found.\n  The file is in the program because: Matched by include pattern '.next/types/**/*.ts' in 'tsconfig.json'";
+
+    const result = await runSummary(dir, "typecheck", ["node", "-e", `console.error(${JSON.stringify(output)}); process.exit(2)`], true);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.findings.some((finding) =>
+      finding.title.includes("Next.js generated types may be transient") &&
+      finding.detail?.includes("If a Next.js build is running concurrently")
+    )).toBe(true);
+  });
+
   it("falls back to a bounded raw tail for unrecognized failing output", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abg-tail-"));
     const lines = Array.from({ length: 120 }, (_, i) => `custom reporter line ${i + 1}`);

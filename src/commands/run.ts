@@ -93,6 +93,27 @@ function parseRustFindings(output: string, findings: Finding[]): void {
   }
 }
 
+function parsePnpmFindings(output: string, findings: Finding[]): void {
+  if (!/\b(?:ERR_)?PNPM_IGNORED_BUILDS\b/.test(output)) return;
+  pushUnique(findings, {
+    severity: "error",
+    title: "pnpm blocked dependency build scripts before the requested command ran",
+    detail: [
+      "pnpm reported ERR_PNPM_IGNORED_BUILDS. Approve the dependency build scripts with `pnpm approve-builds` when that is appropriate for the repo.",
+      "For a one-off check, running the local binary directly can avoid invoking pnpm's script policy, for example `./node_modules/.bin/tsc --noEmit` or `node_modules\\.bin\\tsc.cmd --noEmit` on Windows."
+    ].join("\n")
+  });
+}
+
+function parseNextTypeFindings(output: string, findings: Finding[]): void {
+  if (!/\bTS6053\b/.test(output) || !/\.next[/\\]types/.test(output)) return;
+  pushUnique(findings, {
+    severity: "info",
+    title: "Next.js generated types may be transient during a concurrent build",
+    detail: "If a Next.js build is running concurrently, rerun after it completes; `.next/types` may be transient."
+  });
+}
+
 function parseGenericFindings(output: string, findings: Finding[]): void {
   const lines = output.split(/\r?\n/);
   lines.forEach((line, i) => {
@@ -109,6 +130,8 @@ function parseFindings(output: string, exitCode: number | null): Finding[] {
   parseVitestFindings(output, findings);
   parseGradleDetektFindings(output, findings);
   parseRustFindings(output, findings);
+  parsePnpmFindings(output, findings);
+  parseNextTypeFindings(output, findings);
   if (!findings.length && exitCode !== 0) {
     parseGenericFindings(output, findings);
   }

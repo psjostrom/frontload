@@ -183,6 +183,13 @@ frontload run --repo . --kind lint -- pnpm lint
 The full raw log is stored under `.frontload/logs/`. The agent sees a compact
 summary with exit code, duration, preserved failures, and the log path.
 
+When package-manager or framework output points at common setup races, the
+summary includes a targeted hint. For example, pnpm's
+`ERR_PNPM_IGNORED_BUILDS` explains that dependency build scripts were blocked
+before the requested command ran, and TypeScript `TS6053` output for
+`.next/types` notes that Next.js generated types can be transient while a build
+is running.
+
 Frontload allows commands from `frontload.config.json` and discovers common safe
 project commands from `package.json`, Gradle metadata, and `Cargo.toml`. Use
 `--allow-unconfigured` only for a trusted one-off local command.
@@ -255,15 +262,16 @@ Run doctor from the initialized repo:
 frontload doctor --repo .
 ```
 
-Doctor checks local state, the active Codex MCP config scope, and whether the
-configured MCP command can launch and answer `fl_policy`. If doctor passes but a
-currently open Codex session still reports `Transport closed`, restart Codex so
-it reloads the MCP process. If doctor reports `legacyGlobalConflict`, an older
-global `~/.codex/config.toml` Frontload entry points at another repo; the
-project `.codex/config.toml` is preferred, and the legacy global entry can be
-removed once you no longer need it. If that global entry points at a missing
-absolute path or a stale path containing only `.frontload` state, run
-`frontload upgrade --repo .` from the repo you want Codex to use.
+Doctor checks local state, the installed `frontload` command, the active Codex
+MCP config scope, and whether the configured MCP command can launch and answer
+`fl_policy`. If doctor passes but a currently open Codex session still reports
+`Transport closed`, restart Codex so it reloads the MCP process. If doctor
+reports `legacyGlobalConflict`, an older global `~/.codex/config.toml`
+Frontload entry points at another repo; the project `.codex/config.toml` is
+preferred, and the legacy global entry can be removed once you no longer need
+it. If that global entry points at a missing absolute path or a stale path
+containing only `.frontload` state, run `frontload upgrade --repo .` from the
+repo you want Codex to use.
 
 ## CLI Reference
 
@@ -320,11 +328,11 @@ frontload doctor --repo .
 frontload doctor --repo . --dogfood
 ```
 
-Checks the local environment, Frontload state directory, active Codex MCP config,
-and whether the configured MCP command can launch and answer a health request.
-It also reports whether generated `.frontload/` state is ignored locally through
-`.git/info/exclude`, including whether doctor repaired that rule during the
-check.
+Checks the local environment, installed `frontload` command, Frontload state
+directory, active Codex MCP config, and whether the configured MCP command can
+launch and answer a health request. It also reports whether generated
+`.frontload/` state is ignored locally through `.git/info/exclude`, including
+whether doctor repaired that rule during the check.
 Add `--dogfood` to fail when the active Codex setup is not using the regular
 installed `frontload` command for the requested repo. `--home <dir>` points
 doctor at an alternate home directory for agent configuration checks.
