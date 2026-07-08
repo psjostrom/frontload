@@ -2,6 +2,7 @@ node_modules/
 .pnpm-store/
 dist/
 .frontload/
+.codex/
 fixtures/**/.frontload/
 fixtures/**/node_modules/
 coverage/
