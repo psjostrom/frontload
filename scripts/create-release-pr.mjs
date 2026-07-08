@@ -17,6 +17,7 @@ Options:
   --version <x.y.z>  Create a release PR for an explicit version.
   --bump <kind>      Bump the current package version by patch, minor, or major. Defaults to patch.
   --remote <name>    Git remote to fetch and push. Defaults to origin.
+  --prepare          CI mode: bump package.json and write outputs to \$GITHUB_OUTPUT; skip git operations.
   --help             Show this help text.`;
 }
 
@@ -40,6 +41,10 @@ export function parseArgs(argv) {
     if (arg === "--remote") {
       options.remote = optionValue(argv, i, arg);
       i += 1;
+      continue;
+    }
+    if (arg === "--prepare") {
+      options.prepare = true;
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -171,6 +176,13 @@ function writeBodyFile(body) {
   return file;
 }
 
+function writeGithubOutput(version, branch, title, bodyFile) {
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (!outputFile) throw new Error("GITHUB_OUTPUT is not set. --prepare requires a GitHub Actions environment.");
+  fs.appendFileSync(outputFile, `version=${version}\nbranch=${branch}\ntitle=${title}\nbody_file=${bodyFile}\n`);
+  console.log(`Wrote release metadata to $GITHUB_OUTPUT: version=${version} branch=${branch}`);
+}
+
 export function createReleasePr({ repoRoot = process.cwd(), argv = process.argv.slice(2) } = {}) {
   const options = parseArgs(argv);
   const base = "main";
@@ -179,11 +191,12 @@ export function createReleasePr({ repoRoot = process.cwd(), argv = process.argv.
     return;
   }
 
-  ensureCleanWorktree(repoRoot);
-
-  run("git", ["fetch", options.remote, base, "--prune"], { cwd: repoRoot });
-  run("git", ["switch", base], { cwd: repoRoot });
-  run("git", ["pull", "--ff-only", options.remote, base], { cwd: repoRoot });
+  if (!options.prepare) {
+    ensureCleanWorktree(repoRoot);
+    run("git", ["fetch", options.remote, base, "--prune"], { cwd: repoRoot });
+    run("git", ["switch", base], { cwd: repoRoot });
+    run("git", ["pull", "--ff-only", options.remote, base], { cwd: repoRoot });
+  }
 
   const packageJson = readPackageJson(repoRoot);
   const version = resolveTargetVersion({
@@ -194,7 +207,10 @@ export function createReleasePr({ repoRoot = process.cwd(), argv = process.argv.
   const branch = branchNameForVersion(version);
   const title = prTitleForVersion(version);
 
-  run("git", ["switch", "-c", branch], { cwd: repoRoot });
+  if (!options.prepare) {
+    run("git", ["switch", "-c", branch], { cwd: repoRoot });
+  }
+
   run("npm", ["version", version, "--no-git-tag-version"], { cwd: repoRoot });
 
   const previousRef = findPreviousReleaseRef({
@@ -204,6 +220,11 @@ export function createReleasePr({ repoRoot = process.cwd(), argv = process.argv.
   const commits = previousRef ? gitLog(repoRoot, `${previousRef}..${base}`) : gitLog(repoRoot, base);
   const body = formatReleasePrBody({ version, previousRef, commits });
   const bodyFile = writeBodyFile(body);
+
+  if (options.prepare) {
+    writeGithubOutput(version, branch, title, bodyFile);
+    return;
+  }
 
   run("git", ["add", "package.json"], { cwd: repoRoot });
   run("git", ["commit", "-m", title], { cwd: repoRoot });

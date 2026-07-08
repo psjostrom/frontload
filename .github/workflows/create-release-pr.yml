@@ -37,19 +37,99 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Configure git author
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Create release PR
+      - name: Prepare release metadata
+        id: prepare
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
           BUMP_INPUT: ${{ inputs.bump }}
         run: |
           if [ -n "$VERSION_INPUT" ]; then
-            node scripts/create-release-pr.mjs --version "$VERSION_INPUT"
+            node scripts/create-release-pr.mjs --prepare --version "$VERSION_INPUT"
           else
-            node scripts/create-release-pr.mjs --bump "$BUMP_INPUT"
+            node scripts/create-release-pr.mjs --prepare --bump "$BUMP_INPUT"
           fi
+
+      - name: Create verified commit, branch, and PR
+        uses: actions/github-script@v7
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          TITLE: ${{ steps.prepare.outputs.title }}
+          BODY_FILE: ${{ steps.prepare.outputs.body_file }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { VERSION, BRANCH, TITLE, BODY_FILE } = process.env;
+
+            const body = fs.readFileSync(BODY_FILE, 'utf8');
+            const packageJson = fs.readFileSync(
+              path.join(process.env.GITHUB_WORKSPACE, 'package.json'),
+              'utf8'
+            );
+
+            // Resolve main HEAD SHA
+            const { data: mainRef } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/main',
+            });
+            const mainSha = mainRef.object.sha;
+
+            // Get the base tree SHA from the current main commit
+            const { data: mainCommit } = await github.rest.git.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: mainSha,
+            });
+
+            // Create a blob for the updated package.json
+            const { data: blob } = await github.rest.git.createBlob({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              content: packageJson,
+              encoding: 'utf-8',
+            });
+
+            // Create a tree containing the updated package.json
+            const { data: tree } = await github.rest.git.createTree({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base_tree: mainCommit.tree.sha,
+              tree: [{
+                path: 'package.json',
+                mode: '100644',
+                type: 'blob',
+                sha: blob.sha,
+              }],
+            });
+
+            // Create a verified commit via the API
+            const { data: commit } = await github.rest.git.createCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              message: TITLE,
+              tree: tree.sha,
+              parents: [mainSha],
+            });
+
+            // Create the release branch pointing at the new commit
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/heads/${BRANCH}`,
+              sha: commit.sha,
+            });
+
+            // Open the pull request
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: TITLE,
+              head: BRANCH,
+              base: 'main',
+              body: body,
+            });
+
+            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+
