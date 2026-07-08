@@ -31,25 +31,135 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Configure git author
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Create release PR
+      - name: Prepare release metadata
+        id: prepare
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
           BUMP_INPUT: ${{ inputs.bump }}
         run: |
           if [ -n "$VERSION_INPUT" ]; then
-            node scripts/create-release-pr.mjs --version "$VERSION_INPUT"
+            node scripts/create-release-pr.mjs --prepare --version "$VERSION_INPUT"
           else
-            node scripts/create-release-pr.mjs --bump "$BUMP_INPUT"
+            node scripts/create-release-pr.mjs --prepare --bump "$BUMP_INPUT"
           fi
+          echo "main_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create verified commit, branch, and PR
+        uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          TITLE: ${{ steps.prepare.outputs.title }}
+          BODY_FILE: ${{ steps.prepare.outputs.body_file }}
+          MAIN_SHA: ${{ steps.prepare.outputs.main_sha }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { BRANCH, TITLE, BODY_FILE } = process.env;
+
+            const body = fs.readFileSync(BODY_FILE, 'utf8');
+            const packageJson = fs.readFileSync(
+              path.join(process.env.GITHUB_WORKSPACE, 'package.json'),
+              'utf8'
+            );
+
+            // Use the SHA captured at checkout time so the workspace files
+            // and the API commit tree are always consistent.
+            const mainSha = process.env.MAIN_SHA;
+
+            // Get the base tree SHA from main
+            const { data: mainCommit } = await github.rest.git.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: mainSha,
+            });
+
+            // Create a blob for the updated package.json
+            const { data: blob } = await github.rest.git.createBlob({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              content: packageJson,
+              encoding: 'utf-8',
+            });
+
+            // Create a tree containing the updated package.json
+            const { data: tree } = await github.rest.git.createTree({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base_tree: mainCommit.tree.sha,
+              tree: [{
+                path: 'package.json',
+                mode: '100644',
+                type: 'blob',
+                sha: blob.sha,
+              }],
+            });
+
+            // Create a verified commit via the API
+            const { data: commit } = await github.rest.git.createCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              message: TITLE,
+              tree: tree.sha,
+              parents: [mainSha],
+            });
+
+            // Create the release branch; on reruns update it instead of failing
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/heads/${BRANCH}`,
+                sha: commit.sha,
+              });
+            } catch (err) {
+              if (err.status !== 422) throw err;
+              await github.rest.git.updateRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${BRANCH}`,
+                sha: commit.sha,
+                force: true,
+              });
+            }
+
+            // Open the pull request; on reruns reuse the existing open PR
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: TITLE,
+                head: BRANCH,
+                base: 'main',
+                body: body,
+              }));
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            } catch (err) {
+              if (err.status !== 422) throw err;
+              const { data: existing } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${BRANCH}`,
+                base: 'main',
+                state: 'open',
+              });
+              if (existing.length === 0) throw err;
+              pr = existing[0];
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                title: TITLE,
+                body: body,
+              });
+              console.log(`Updated existing PR #${pr.number}: ${pr.html_url}`);
+            }
+

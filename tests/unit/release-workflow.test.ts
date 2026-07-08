@@ -105,12 +105,25 @@ describe("npm publish workflow", () => {
     expect(permissions).toContain("  contents: write");
     expect(permissions).toContain("  pull-requests: write");
     expect(stepBlock(job, "Checkout")).toContain("fetch-depth: 0");
+    expect(stepBlock(job, "Checkout")).toContain("ref: main");
     expect(stepBlock(job, "Set up Node")).toContain('node-version: "20"');
-    expect(stepBlock(job, "Create release PR")).toContain("GH_TOKEN: ${{ github.token }}");
-    expect(stepBlock(job, "Create release PR")).toContain("VERSION_INPUT: ${{ inputs.version }}");
-    expect(stepBlock(job, "Create release PR")).toContain("BUMP_INPUT: ${{ inputs.bump }}");
-    expect(stepBlock(job, "Create release PR")).toContain('node scripts/create-release-pr.mjs --version "$VERSION_INPUT"');
-    expect(stepBlock(job, "Create release PR")).toContain('node scripts/create-release-pr.mjs --bump "$BUMP_INPUT"');
+
+    const prepareStep = stepBlock(job, "Prepare release metadata");
+    expect(prepareStep).toContain("VERSION_INPUT: ${{ inputs.version }}");
+    expect(prepareStep).toContain("BUMP_INPUT: ${{ inputs.bump }}");
+    expect(prepareStep).toContain('node scripts/create-release-pr.mjs --prepare --version "$VERSION_INPUT"');
+    expect(prepareStep).toContain('node scripts/create-release-pr.mjs --prepare --bump "$BUMP_INPUT"');
+    expect(prepareStep).toContain('echo "main_sha=$(git rev-parse HEAD)"');
+
+    const commitStep = stepBlock(job, "Create verified commit, branch, and PR");
+    expect(commitStep).toContain("actions/github-script");
+    expect(commitStep).toContain("MAIN_SHA: ${{ steps.prepare.outputs.main_sha }}");
+    expect(commitStep).toContain("process.env.MAIN_SHA");
+    expect(commitStep).toContain("github.rest.git.createCommit");
+    expect(commitStep).toContain("github.rest.pulls.create");
+    expect(commitStep).toContain("github.rest.pulls.update");
+    expect(commitStep).not.toContain("github.rest.git.getRef");
+
     expect(workflow).not.toContain("pnpm install");
     expect(workflow).not.toContain("pnpm/action-setup");
     expect(workflow).not.toContain("npm publish");
