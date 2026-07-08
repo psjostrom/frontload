@@ -70,6 +70,7 @@ describe("npm publish workflow", () => {
     );
     expect(stepBlock(verify, "Pack npm package")).toContain("npm pack --pack-destination .release");
     expect(stepBlock(verify, "Upload npm package")).toContain("path: .release/frontload-*.tgz");
+    expect(stepBlock(verify, "Upload npm package")).toContain("include-hidden-files: true");
 
     expect(publish).toContain("needs:\n      - check-version\n      - verify");
     expect(publish).toContain("if: needs.check-version.outputs.should_publish == 'true'");
