@@ -20,7 +20,8 @@ Tools:
 
 - `fl_policy`
 - `fl_repo_index`: manually refreshes the repo index
-- `fl_repo_dossier`: ranks likely files and tests for a task
+- `fl_repo_dossier`: ranks likely files and tests for a task; `budgetChars`
+  controls dossier generation before the response is fitted to the tool cap
 - `fl_search`: searches indexed paths, symbols, imports, and bounded content
 - `fl_read_budgeted`
 - `fl_run_summary`

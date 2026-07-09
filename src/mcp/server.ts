@@ -33,6 +33,41 @@ type ReadInput = {
   lineCount?: number;
 };
 
+function shellWords(command: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | undefined;
+  let escaped = false;
+
+  for (const char of command) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if ((char === "'" || char === "\"") && (!quote || quote === char)) {
+      quote = quote ? undefined : char;
+      continue;
+    }
+    if (!quote && /\s/.test(char)) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaped) current += "\\";
+  if (current) parts.push(current);
+  return parts;
+}
+
 function json(data: unknown): McpTextResponse {
   return { content: [{ type: "text", text: outputText(data) }] };
 }
@@ -167,8 +202,7 @@ export function createMcpHandlers(repoRoot: string) {
     dossier: async (input: { task: string; budgetChars: number; maxFiles: number }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "dossier", input, async () => {
         const config = loadConfig(repoRoot);
-        const effectiveBudget = Math.min(input.budgetChars, Math.max(1000, config.budgets.maxToolOutputChars - 1600));
-        const dossier = await generateDossier(repoRoot, input.task, effectiveBudget, input.maxFiles);
+        const dossier = await generateDossier(repoRoot, input.task, input.budgetChars, input.maxFiles);
         return {
           data: fitDossierData(config.budgets.maxToolOutputChars, {
             markdown: dossier.markdown,
@@ -207,7 +241,7 @@ export function createMcpHandlers(repoRoot: string) {
 
     run: async (input: { kind: CommandSummary["kind"]; command: string }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "run", input, async () => {
-        const data = await runSummary(repoRoot, input.kind, input.command.split(/\s+/));
+        const data = await runSummary(repoRoot, input.kind, shellWords(input.command));
         return { data, baseline: { bytes: data.rawOutputBytes, kind: "raw-command-output" } };
       }),
 
@@ -251,7 +285,7 @@ export async function startMcp(repoRoot: string): Promise<void> {
   const server = new McpServer({ name: "frontload", version: packageVersion });
   const handlers = createMcpHandlers(repoRoot);
   const config = loadConfig(repoRoot);
-  const defaultDossierChars = Math.min(config.budgets.defaultDossierChars, config.budgets.maxToolOutputChars);
+  const defaultDossierChars = config.budgets.defaultDossierChars;
   server.tool("fl_policy", "Return current budget and command policy. Use before running costly commands; do not use for source exploration.", {}, handlers.policy);
   server.tool("fl_repo_index", "Build or refresh the repo index. Use before dossiers/search; not needed before every read.", { force: z.boolean().optional() }, handlers.index);
   server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().default(defaultDossierChars), maxFiles: z.number().default(12) }, handlers.dossier);

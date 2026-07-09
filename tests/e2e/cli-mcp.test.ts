@@ -360,6 +360,25 @@ describe("e2e proof workflow", () => {
     expect(event?.baselineBytes).toBeGreaterThan(5000);
   });
 
+  it("preserves quoted MCP run command arguments", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-run-quotes-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      commands: {
+        allowed: ["node print-args.mjs"]
+      }
+    }));
+    fs.writeFileSync(path.join(repo, "print-args.mjs"), "console.log(JSON.stringify(process.argv.slice(2)))\n");
+
+    const response = await createMcpHandlers(repo).run({
+      kind: "generic",
+      command: "node print-args.mjs alpha \"two words\" 'three words'"
+    });
+    const data = JSON.parse(response.content[0].text);
+
+    expect(data.exitCode).toBe(0);
+    expect(data.summary).toContain("[\"alpha\",\"two words\",\"three words\"]");
+  });
+
   it("returns usable default dossier output under the default MCP cap", async () => {
     const repo = writeNoisySearchRepo();
     const response = await createMcpHandlers(repo).dossier({
@@ -373,6 +392,7 @@ describe("e2e proof workflow", () => {
     expect(text.length).toBeLessThanOrEqual(8000);
     expect(data.summary).toBe("Dossier generated.");
     expect(data.markdown).toContain("Frontload Dossier");
+    expect(data.markdown).toContain("Requested budget: 12000 chars");
     expect(data.markdown).toContain("src/target-");
     expect(data.files.length).toBeGreaterThan(0);
     expect(data.ranked).toBeUndefined();
@@ -514,6 +534,27 @@ describe("e2e proof workflow", () => {
 
     expect(configured.stdout).toContain("Requested budget: 1234 chars");
     expect(explicit.stdout).toContain("Requested budget: 4321 chars");
+  });
+
+  it("limits CLI dossier files when max-files is provided", async () => {
+    const repo = writeNoisySearchRepo();
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    const result = await execa(process.execPath, [
+      cli,
+      "dossier",
+      "target reconnect signal",
+      "--repo",
+      repo,
+      "--budget",
+      "12000",
+      "--max-files",
+      "1"
+    ]);
+    const mostRelevant = result.stdout.split("## Suggested read order")[0] ?? result.stdout;
+    const fileEntries = mostRelevant.match(/\n\d+\. `src\/target-/g) ?? [];
+
+    expect(fileEntries).toHaveLength(1);
   });
 
   it("keeps CLI search output under the configured tool output cap", async () => {
