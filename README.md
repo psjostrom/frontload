@@ -351,11 +351,12 @@ of every unsupported file type.
 ### `dossier`
 
 ```bash
-frontload dossier "task description" --repo . --format markdown --budget 6000
+frontload dossier "task description" --repo . --format markdown --budget 6000 --max-files 12
 ```
 
 Generates a task-focused Markdown dossier. The `--format` flag currently accepts
-`markdown`; structured data is used internally by MCP tools.
+`markdown`; `--max-files` limits the ranked file list. Structured data is used
+internally by MCP tools.
 
 ### `search`
 

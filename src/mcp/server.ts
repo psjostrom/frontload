@@ -6,7 +6,8 @@ import { z } from "zod";
 import { appendEvent, budgetReport, outputSize, outputText } from "../budget/events.js";
 import { boundedOutput, fitSearchOutput, searchResultsOutput } from "../budget/output-bounds.js";
 import { readBudgeted } from "../commands/read.js";
-import { runSummary } from "../commands/run.js";
+import { shellWords } from "../utils/shell-words.js";
+import { inferredAllowedCommands, runSummary } from "../commands/run.js";
 import { loadConfig } from "../config/config.js";
 import { CompactRanked, compactRankedResults, generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { gitDiffSummary } from "../diff/diff.js";
@@ -167,8 +168,7 @@ export function createMcpHandlers(repoRoot: string) {
     dossier: async (input: { task: string; budgetChars: number; maxFiles: number }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "dossier", input, async () => {
         const config = loadConfig(repoRoot);
-        const effectiveBudget = Math.min(input.budgetChars, Math.max(1000, config.budgets.maxToolOutputChars - 1600));
-        const dossier = await generateDossier(repoRoot, input.task, effectiveBudget, input.maxFiles);
+        const dossier = await generateDossier(repoRoot, input.task, input.budgetChars, input.maxFiles);
         return {
           data: fitDossierData(config.budgets.maxToolOutputChars, {
             markdown: dossier.markdown,
@@ -207,7 +207,11 @@ export function createMcpHandlers(repoRoot: string) {
 
     run: async (input: { kind: CommandSummary["kind"]; command: string }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "run", input, async () => {
-        const data = await runSummary(repoRoot, input.kind, input.command.split(/\s+/));
+        const commandParts = shellWords(input.command);
+        const config = loadConfig(repoRoot);
+        const allAllowed = [...config.commands.allowed, ...inferredAllowedCommands(repoRoot)];
+        const parsedAllowed = allAllowed.map((cmd) => shellWords(cmd));
+        const data = await runSummary(repoRoot, input.kind, commandParts, false, config, parsedAllowed);
         return { data, baseline: { bytes: data.rawOutputBytes, kind: "raw-command-output" } };
       }),
 
@@ -251,10 +255,10 @@ export async function startMcp(repoRoot: string): Promise<void> {
   const server = new McpServer({ name: "frontload", version: packageVersion });
   const handlers = createMcpHandlers(repoRoot);
   const config = loadConfig(repoRoot);
-  const defaultDossierChars = Math.min(config.budgets.defaultDossierChars, config.budgets.maxToolOutputChars);
+  const defaultDossierChars = config.budgets.defaultDossierChars;
   server.tool("fl_policy", "Return current budget and command policy. Use before running costly commands; do not use for source exploration.", {}, handlers.policy);
   server.tool("fl_repo_index", "Build or refresh the repo index. Use before dossiers/search; not needed before every read.", { force: z.boolean().optional() }, handlers.index);
-  server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().default(defaultDossierChars), maxFiles: z.number().default(12) }, handlers.dossier);
+  server.tool("fl_repo_dossier", "Create a compact task dossier. Use before broad exploration; do not use for exact file contents.", { task: z.string(), budgetChars: z.number().int().positive().default(defaultDossierChars), maxFiles: z.number().int().positive().default(12) }, handlers.dossier);
   server.tool("fl_search", "Search indexed files by task terms and bounded literal content matches. Use instead of broad grep; not a full regex engine.", { query: z.string(), limit: z.number().default(10) }, handlers.search);
   server.tool(
     "fl_read_budgeted",

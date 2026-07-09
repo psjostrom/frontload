@@ -751,14 +751,14 @@ program.command("index").option("--repo <repo>", "repository root", ".").action(
   print(measuredResult.output);
 });
 
-program.command("dossier").argument("<task>").option("--repo <repo>", "repository root", ".").option("--format <format>", "markdown").option("--budget <chars>").action(async (task, opts) => {
+program.command("dossier").argument("<task>").option("--repo <repo>", "repository root", ".").option("--format <format>", "markdown").option("--budget <chars>", "target output characters", parsePositiveInteger).option("--max-files <n>", "maximum ranked files to include", parsePositiveInteger, 12).action(async (task, opts) => {
   const repoRoot = resolveRepo(opts.repo);
-  const budgetChars = opts.budget ? Number(opts.budget) : loadConfig(repoRoot).budgets.defaultDossierChars;
+  const budgetChars = opts.budget ? (opts.budget as number) : loadConfig(repoRoot).budgets.defaultDossierChars;
   const measuredResult = await measured(
     repoRoot,
     "dossier",
     { task, opts },
-    () => generateDossier(repoRoot, task, budgetChars),
+    () => generateDossier(repoRoot, task, budgetChars, opts.maxFiles as number),
     { output: (result) => result.markdown }
   );
   print(measuredResult.output);
