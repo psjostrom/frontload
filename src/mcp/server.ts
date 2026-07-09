@@ -41,17 +41,22 @@ export function shellWords(command: string): string[] {
   let hasArg = false;
   const isWin = process.platform === "win32";
 
-  for (const char of command) {
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
     if (escaped) {
       current += char;
       escaped = false;
       hasArg = true;
       continue;
     }
-    if (!isWin && char === "\\" && quote !== "'") {
-      escaped = true;
-      hasArg = true;
-      continue;
+    if (char === "\\" && quote !== "'") {
+      const next = command[i + 1];
+      // On Windows, only escape before quotes or whitespace to preserve path backslashes
+      if (!isWin || next === '"' || next === "'" || (next !== undefined && /\s/.test(next))) {
+        escaped = true;
+        hasArg = true;
+        continue;
+      }
     }
     if ((char === "'" || char === "\"") && (!quote || quote === char)) {
       quote = quote ? undefined : char;
