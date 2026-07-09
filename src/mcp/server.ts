@@ -38,25 +38,30 @@ function shellWords(command: string): string[] {
   let current = "";
   let quote: "'" | "\"" | undefined;
   let escaped = false;
+  let hasArg = false;
 
   for (const char of command) {
     if (escaped) {
       current += char;
       escaped = false;
+      hasArg = true;
       continue;
     }
     if (char === "\\" && quote !== "'") {
       escaped = true;
+      hasArg = true;
       continue;
     }
     if ((char === "'" || char === "\"") && (!quote || quote === char)) {
       quote = quote ? undefined : char;
+      hasArg = true;
       continue;
     }
     if (!quote && /\s/.test(char)) {
-      if (current) {
+      if (current || hasArg) {
         parts.push(current);
         current = "";
+        hasArg = false;
       }
       continue;
     }
