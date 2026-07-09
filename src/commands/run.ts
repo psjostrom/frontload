@@ -149,7 +149,15 @@ function isAllowed(command: string, config: FrontloadConfig): boolean {
   return config.commands.allowed.some((allowed) => command === allowed || command.startsWith(`${allowed} `));
 }
 
-function inferredAllowedCommands(repoRoot: string): string[] {
+/** Compare parsed argv against parsed allowed-command argv arrays (prefix match). */
+function isAllowedArgv(commandParts: string[], parsedAllowed: string[][]): boolean {
+  return parsedAllowed.some((allowedParts) => {
+    if (commandParts.length < allowedParts.length) return false;
+    return allowedParts.every((part, i) => commandParts[i] === part);
+  });
+}
+
+export function inferredAllowedCommands(repoRoot: string): string[] {
   const commands = new Set<string>();
   const packageJson = path.join(repoRoot, "package.json");
   if (fs.existsSync(packageJson)) {
@@ -203,11 +211,14 @@ function isAllowedWithDiscovery(repoRoot: string, command: string, config: Front
   return isAllowed(command, discovered);
 }
 
-export async function runSummary(repoRoot: string, kind: CommandSummary["kind"] | undefined, commandParts: string[], allowUnconfigured = false, config = loadConfig(repoRoot)): Promise<CommandSummary> {
+export async function runSummary(repoRoot: string, kind: CommandSummary["kind"] | undefined, commandParts: string[], allowUnconfigured = false, config = loadConfig(repoRoot), parsedAllowed?: string[][]): Promise<CommandSummary> {
   const safeKind = kind ?? "generic";
   const command = commandParts.join(" ");
-  if (!allowUnconfigured && !isAllowedWithDiscovery(repoRoot, command, config)) {
-    throw new Error(`Command is not allowed by frontload.config.json: ${command}`);
+  if (!allowUnconfigured) {
+    const allowed = parsedAllowed ? isAllowedArgv(commandParts, parsedAllowed) : isAllowedWithDiscovery(repoRoot, command, config);
+    if (!allowed) {
+      throw new Error(`Command is not allowed by frontload.config.json: ${command}`);
+    }
   }
   const logDir = path.join(ensureStateDir(repoRoot), "logs");
   fs.mkdirSync(logDir, { recursive: true });
