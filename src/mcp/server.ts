@@ -249,7 +249,16 @@ export function createMcpHandlers(repoRoot: string) {
 
     run: async (input: { kind: CommandSummary["kind"]; command: string }): Promise<McpTextResponse> =>
       measuredMcp(repoRoot, "run", input, async () => {
-        const data = await runSummary(repoRoot, input.kind, shellWords(input.command));
+        const commandParts = shellWords(input.command);
+        const config = loadConfig(repoRoot);
+        const normalizedConfig = {
+          ...config,
+          commands: {
+            ...config.commands,
+            allowed: config.commands.allowed.map((cmd) => shellWords(cmd).join(" "))
+          }
+        };
+        const data = await runSummary(repoRoot, input.kind, commandParts, false, normalizedConfig);
         return { data, baseline: { bytes: data.rawOutputBytes, kind: "raw-command-output" } };
       }),
 
