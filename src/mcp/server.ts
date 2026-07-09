@@ -39,6 +39,7 @@ export function shellWords(command: string): string[] {
   let quote: "'" | "\"" | undefined;
   let escaped = false;
   let hasArg = false;
+  const isWin = process.platform === "win32";
 
   for (const char of command) {
     if (escaped) {
@@ -47,7 +48,7 @@ export function shellWords(command: string): string[] {
       hasArg = true;
       continue;
     }
-    if (char === "\\" && quote !== "'") {
+    if (!isWin && char === "\\" && quote !== "'") {
       escaped = true;
       hasArg = true;
       continue;

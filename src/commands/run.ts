@@ -152,6 +152,7 @@ function isAllowed(command: string, config: FrontloadConfig): boolean {
 /** Compare parsed argv against parsed allowed-command argv arrays (prefix match). */
 function isAllowedArgv(commandParts: string[], parsedAllowed: string[][]): boolean {
   return parsedAllowed.some((allowedParts) => {
+    if (allowedParts.length === 0) return false;
     if (commandParts.length < allowedParts.length) return false;
     return allowedParts.every((part, i) => commandParts[i] === part);
   });
