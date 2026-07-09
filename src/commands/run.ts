@@ -213,6 +213,9 @@ function isAllowedWithDiscovery(repoRoot: string, command: string, config: Front
 }
 
 export async function runSummary(repoRoot: string, kind: CommandSummary["kind"] | undefined, commandParts: string[], allowUnconfigured = false, config = loadConfig(repoRoot), parsedAllowed?: string[][]): Promise<CommandSummary> {
+  if (commandParts.length === 0) {
+    throw new Error("No command provided");
+  }
   const safeKind = kind ?? "generic";
   const command = commandParts.join(" ");
   if (!allowUnconfigured) {

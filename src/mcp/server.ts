@@ -6,6 +6,7 @@ import { z } from "zod";
 import { appendEvent, budgetReport, outputSize, outputText } from "../budget/events.js";
 import { boundedOutput, fitSearchOutput, searchResultsOutput } from "../budget/output-bounds.js";
 import { readBudgeted } from "../commands/read.js";
+import { shellWords } from "../utils/shell-words.js";
 import { inferredAllowedCommands, runSummary } from "../commands/run.js";
 import { loadConfig } from "../config/config.js";
 import { CompactRanked, compactRankedResults, generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
@@ -32,55 +33,6 @@ type ReadInput = {
   startLine?: number;
   lineCount?: number;
 };
-
-export function shellWords(command: string): string[] {
-  const parts: string[] = [];
-  let current = "";
-  let quote: "'" | "\"" | undefined;
-  let escaped = false;
-  let hasArg = false;
-  const isWin = process.platform === "win32";
-
-  for (let i = 0; i < command.length; i++) {
-    const char = command[i];
-    if (escaped) {
-      current += char;
-      escaped = false;
-      hasArg = true;
-      continue;
-    }
-    if (char === "\\" && quote !== "'") {
-      const next = command[i + 1];
-      // On Windows, only escape before quotes or whitespace to preserve path backslashes
-      if (!isWin || next === '"' || next === "'" || (next !== undefined && /\s/.test(next))) {
-        escaped = true;
-        hasArg = true;
-        continue;
-      }
-    }
-    if ((char === "'" || char === "\"") && (!quote || quote === char)) {
-      quote = quote ? undefined : char;
-      hasArg = true;
-      continue;
-    }
-    if (!quote && /\s/.test(char)) {
-      if (current || hasArg) {
-        parts.push(current);
-        current = "";
-        hasArg = false;
-      }
-      continue;
-    }
-    current += char;
-  }
-
-  if (escaped) {
-    current += "\\";
-    hasArg = true;
-  }
-  if (current || hasArg) parts.push(current);
-  return parts;
-}
 
 function json(data: unknown): McpTextResponse {
   return { content: [{ type: "text", text: outputText(data) }] };

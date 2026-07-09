@@ -1,5 +1,6 @@
 import { FrontloadConfig } from "../config/config.js";
 import { fileCategory } from "../utils/category.js";
+import { shellWords } from "../utils/shell-words.js";
 
 export type HookPermissionDecision = "allow" | "deny" | "ask";
 
@@ -70,15 +71,6 @@ function alreadyBudgeted(command: string): boolean {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function shellWords(command: string): string[] {
-  const words: string[] = [];
-  const pattern = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
-  for (const match of command.matchAll(pattern)) {
-    words.push((match[1] ?? match[2] ?? match[3] ?? "").replace(/\\"/g, "\""));
-  }
-  return words;
 }
 
 function commandKind(command: string): "test" | "typecheck" | "lint" | null {
