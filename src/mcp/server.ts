@@ -63,8 +63,11 @@ function shellWords(command: string): string[] {
     current += char;
   }
 
-  if (escaped) current += "\\";
-  if (current) parts.push(current);
+  if (escaped) {
+    current += "\\";
+    hasArg = true;
+  }
+  if (current || hasArg) parts.push(current);
   return parts;
 }
 
