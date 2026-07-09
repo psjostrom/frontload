@@ -1,6 +1,6 @@
 {
   "name": "frontload",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local-first context and cost gateway for AI coding agents.",
   "type": "module",
   "packageManager": "pnpm@10.14.0",
