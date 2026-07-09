@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
 import { ensureStateDir } from "../utils/path.js";
+import { packageVersion } from "../version.js";
 
 export type AgentName = "codex" | "claude";
 export type ConfigScope = "project" | "global";
@@ -58,6 +59,7 @@ export type McpConfigAdapter = {
 };
 
 type InstallRunner = (command: string, args: string[], options: { stdio: "inherit" }) => unknown;
+type VersionGetter = (packageManager: PackageManager) => string | undefined;
 type JsonObject = Record<string, unknown>;
 
 export function packageRoot(): string {
@@ -458,6 +460,19 @@ export function formatCommand(command: Pick<GlobalInstallCommand, "command" | "a
   return [command.command, ...command.args].join(" ");
 }
 
+function getLatestVersion(packageManager: PackageManager = "npm"): string | undefined {
+  try {
+    const result = execFileSync(packageManager, ["view", "frontload", "version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000
+    });
+    return result.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export function installGlobalFrontload(packageManager: PackageManager = "npm", runner: InstallRunner = execFileSync): GlobalInstallResult {
   const install = globalInstallCommand(packageManager);
   if (isGloballyInstalled()) {
@@ -498,9 +513,21 @@ export function installGlobalFrontload(packageManager: PackageManager = "npm", r
   }
 }
 
-export function upgradeGlobalFrontload(packageManager: PackageManager = "npm", runner: InstallRunner = execFileSync): GlobalInstallResult {
+export function upgradeGlobalFrontload(packageManager: PackageManager = "npm", runner: InstallRunner = execFileSync, versionGetter: VersionGetter = getLatestVersion): GlobalInstallResult {
   const wasInstalled = isGloballyInstalled();
   const install = globalInstallCommand(packageManager, "frontload@latest");
+  const currentVersion = packageVersion;
+  const latestVersion = versionGetter(packageManager);
+
+if (wasInstalled && latestVersion && currentVersion === latestVersion) {
+    return {
+      action: "skipped",
+      command: install.command,
+      args: install.args,
+      notes: [`Already at the latest version (${currentVersion}). Agent configuration refreshed.`]
+    };
+  }
+
   try {
     runner(install.command, install.args, { stdio: "inherit" });
     if (!isGloballyInstalled()) {
