@@ -468,12 +468,13 @@ describe("installer", () => {
     writeExecutable(bin);
     try {
       const calls: Array<{ command: string; args: string[] }> = [];
+      const currentVersion = (JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as { version: string }).version;
       const upgraded = upgradeGlobalFrontload("npm", (command, args) => {
         calls.push({ command, args });
-      }, () => "0.2.2");
+      }, () => currentVersion);
 
       expect(upgraded.action).toBe("skipped");
-      expect(upgraded.notes[0]).toContain("Already at the latest version (0.2.2)");
+      expect(upgraded.notes[0]).toContain(`Already at the latest version (${currentVersion})`);
       expect(calls).toEqual([]);
     } finally {
       process.env.PATH = oldPath;
