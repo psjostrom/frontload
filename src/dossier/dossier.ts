@@ -76,16 +76,21 @@ function concreteTaskTerms(task: string): string[] {
 }
 
 async function changedGitPaths(repoRoot: string): Promise<Set<string>> {
-  const result = await execa("git", ["status", "--porcelain", "--untracked-files=normal"], {
-    cwd: repoRoot,
-    reject: false
-  });
+  let result;
+  try {
+    result = await execa("git", ["status", "--porcelain", "-z", "--untracked-files=normal"], {
+      cwd: repoRoot,
+      reject: false
+    });
+  } catch {
+    return new Set();
+  }
   if (result.exitCode !== 0) return new Set();
   const paths = new Set<string>();
-  for (const line of result.stdout.split(/\r?\n/).filter(Boolean)) {
-    const candidate = line.slice(3).trim();
-    const normalized = candidate.includes(" -> ") ? candidate.split(" -> ").at(-1) ?? candidate : candidate;
-    if (normalized) paths.add(normalized);
+  for (const entry of result.stdout.split("\0").filter(Boolean)) {
+    // NUL-delimited entries: "XY path" or "XY old\0new" for renames
+    const raw = entry.slice(3);
+    if (raw) paths.add(raw);
   }
   return paths;
 }
@@ -305,11 +310,12 @@ export async function searchIndexMeasured(repoRoot: string, query: string, limit
   const index = await loadFreshIndex(repoRoot);
   const queryWords = searchTerms(query);
   const concreteTerms = concreteTaskTerms(query);
+  const emptyChangedPaths = new Set<string>();
   const unboundedResults = !queryWords.length && /^[\w./-]+$/.test(query.trim())
     ? inventorySearch(index, query)
     : index.files
       .map((file) => {
-        const ranked = scoreFile(file, queryWords, concreteTerms, new Set<string>(), index);
+        const ranked = scoreFile(file, queryWords, concreteTerms, emptyChangedPaths, index);
         const content = contentSignals(repoRoot, file, query, queryWords);
         return {
           ...ranked,

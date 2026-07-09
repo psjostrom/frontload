@@ -124,6 +124,7 @@ describe("dossier", () => {
 
   it("prioritizes concrete document-flow paths over dependency-only noise", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-dossier-document-flow-"));
+    try {
     fs.mkdirSync(path.join(dir, "app/api/analyze"), { recursive: true });
     fs.mkdirSync(path.join(dir, "components/app/views"), { recursive: true });
     fs.mkdirSync(path.join(dir, "components/app"), { recursive: true });
@@ -189,6 +190,9 @@ describe("dossier", () => {
     expect(topPaths).toContain("components/app/review-document-dialog.tsx");
     expect(topPaths).toContain("lib/analyze/heuristic.ts");
     expect(topPaths).toContain("lib/demo/store.tsx");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("returns exact unbounded search results alongside the bounded response", async () => {
