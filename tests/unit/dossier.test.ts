@@ -122,6 +122,75 @@ describe("dossier", () => {
     expect(dossier.ranked[0]?.file.path).toBe("lib/byFeel.ts");
   });
 
+  it("prioritizes concrete document-flow paths over dependency-only noise", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-dossier-document-flow-"));
+    fs.mkdirSync(path.join(dir, "app/api/analyze"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "components/app/views"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "components/app"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "lib/analyze"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "lib/demo"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "lib/quick-log"), { recursive: true });
+
+    fs.writeFileSync(path.join(dir, "app/api/analyze/route.ts"), [
+      "import { analyzeDocument } from \"../../../lib/analyze/heuristic\";",
+      "import { summarizeQuickLog } from \"../../../lib/quick-log/logic\";",
+      "export async function POST() {",
+      "  return { result: analyzeDocument(\"pending\"), debug: summarizeQuickLog() };",
+      "}",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "components/app/views/documents.tsx"), [
+      "import { ReviewDocumentDialog } from \"../review-document-dialog\";",
+      "import { pendingDocuments } from \"../../../lib/demo/store\";",
+      "export function DocumentsView() { return ReviewDocumentDialog(pendingDocuments); }",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "components/app/review-document-dialog.tsx"), [
+      "import { analyzeDocument } from \"../../lib/analyze/heuristic\";",
+      "export function ReviewDocumentDialog(input: string[]) {",
+      "  return input.map((entry) => analyzeDocument(entry));",
+      "}",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "lib/analyze/heuristic.ts"), [
+      "export function analyzeDocument(input: string): string {",
+      "  return input.includes(\"pending\") ? \"review\" : \"done\";",
+      "}",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "lib/demo/store.tsx"), [
+      "export const pendingDocuments = [\"pending-document\"];",
+      ""
+    ].join("\n"));
+
+    fs.writeFileSync(path.join(dir, "lib/quick-log/logic.ts"), [
+      "import { quickLogStatistics } from \"./statistics\";",
+      "import { quickLogTimeline } from \"./timeline\";",
+      "import { quickLogInsights } from \"./insights\";",
+      "export function summarizeQuickLog(): string {",
+      "  return [quickLogStatistics(), quickLogTimeline(), quickLogInsights()].join(\",\");",
+      "}",
+      ""
+    ].join("\n"));
+    fs.writeFileSync(path.join(dir, "lib/quick-log/statistics.ts"), "export const quickLogStatistics = () => \"statistics\";\n");
+    fs.writeFileSync(path.join(dir, "lib/quick-log/timeline.ts"), "export const quickLogTimeline = () => \"timeline\";\n");
+    fs.writeFileSync(path.join(dir, "lib/quick-log/insights.ts"), "export const quickLogInsights = () => \"insights\";\n");
+
+    await buildIndex(dir);
+    const dossier = await generateDossier(
+      dir,
+      "Fix document upload/review/analysis flow with pending documents in app/api/analyze/route.ts and components/app/review-document-dialog.tsx",
+      12000
+    );
+    const topPaths = dossier.ranked.slice(0, 6).map((entry) => entry.file.path);
+
+    expect(topPaths).toContain("app/api/analyze/route.ts");
+    expect(topPaths).toContain("components/app/views/documents.tsx");
+    expect(topPaths).toContain("components/app/review-document-dialog.tsx");
+    expect(topPaths).toContain("lib/analyze/heuristic.ts");
+    expect(topPaths).toContain("lib/demo/store.tsx");
+  });
+
   it("returns exact unbounded search results alongside the bounded response", async () => {
     await buildIndex(fixture);
     const measured = await searchIndexMeasured(fixture, ".", 2);

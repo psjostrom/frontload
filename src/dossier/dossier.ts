@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execa } from "execa";
 import { loadFreshIndex } from "../indexer/indexer.js";
 import { IndexedFile, RepoIndex } from "../types.js";
 import { fileCategory } from "../diff/diff.js";
@@ -63,6 +64,32 @@ function searchTerms(query: string): string[] {
   return taskTerms(query);
 }
 
+function concreteTaskTerms(task: string): string[] {
+  const concrete = task.match(/[A-Za-z_][A-Za-z0-9_./-]{2,}/g) ?? [];
+  const all = new Set<string>();
+  for (const term of concrete) {
+    const normalized = term.toLowerCase();
+    all.add(normalized);
+    for (const split of words(term)) all.add(split);
+  }
+  return [...all];
+}
+
+async function changedGitPaths(repoRoot: string): Promise<Set<string>> {
+  const result = await execa("git", ["status", "--porcelain", "--untracked-files=normal"], {
+    cwd: repoRoot,
+    reject: false
+  });
+  if (result.exitCode !== 0) return new Set();
+  const paths = new Set<string>();
+  for (const line of result.stdout.split(/\r?\n/).filter(Boolean)) {
+    const candidate = line.slice(3).trim();
+    const normalized = candidate.includes(" -> ") ? candidate.split(" -> ").at(-1) ?? candidate : candidate;
+    if (normalized) paths.add(normalized);
+  }
+  return paths;
+}
+
 function exactTermMatches(value: string, taskWords: string[]): number {
   const normalized = words(value);
   return taskWords.filter((w) => normalized.includes(w)).length;
@@ -84,16 +111,25 @@ function relatedTestsFor(file: IndexedFile, index: RepoIndex): string[] {
     .map((f) => f.path);
 }
 
-function scoreFile(file: IndexedFile, taskWords: string[], index: RepoIndex): Ranked {
+function scoreFile(
+  file: IndexedFile,
+  taskWords: string[],
+  concreteTerms: string[] = [],
+  changedPaths: Set<string> = new Set<string>(),
+  index: RepoIndex
+): Ranked {
   let score = 0;
   const why: string[] = [];
   const pathWords = words(file.path);
   const symbolWords = words(file.symbols.join(" "));
   const importWords = words([...file.imports, ...file.exports].join(" "));
+  const symbolSet = new Set(file.symbols.map((symbol) => symbol.toLowerCase()));
   const pathMatches = taskWords.filter((w) => pathWords.includes(w)).length;
   const symbolMatches = taskWords.filter((w) => symbolWords.includes(w)).length;
   const importMatches = taskWords.filter((w) => importWords.includes(w)).length;
   const basenameMatches = exactTermMatches(file.path.split("/").at(-1) ?? file.path, taskWords);
+  const concretePathMatches = concreteTerms.filter((term) => term.length >= 3 && file.path.toLowerCase().includes(term)).length;
+  const concreteSymbolMatches = concreteTerms.filter((term) => /^[a-z_][a-z0-9_]*$/i.test(term) && symbolSet.has(term)).length;
   if (pathMatches) {
     score += pathMatches * 14;
     why.push("path match");
@@ -110,16 +146,34 @@ function scoreFile(file: IndexedFile, taskWords: string[], index: RepoIndex): Ra
     score += importMatches * 8;
     why.push("import/export match");
   }
+  if (concretePathMatches) {
+    score += concretePathMatches * 22;
+    why.push("concrete path/token match");
+  }
+  if (concreteSymbolMatches) {
+    score += concreteSymbolMatches * 24;
+    why.push("concrete symbol match");
+  }
   if (file.isTest) score += taskWords.some((w) => ["test", "tests", "failing", "failure"].includes(w)) ? 8 : -4;
+  const lexicalSignals = pathMatches + basenameMatches + symbolMatches + importMatches + concretePathMatches + concreteSymbolMatches;
   const relatedTests = relatedTestsFor(file, index);
   if (relatedTests.length) {
-    score += 10;
-    why.push("related test");
+    if (lexicalSignals > 0) {
+      score += 10;
+      why.push("related test");
+    } else {
+      score += 2;
+      why.push("weak related test");
+    }
   }
   const connected = index.edges.filter((e) => e.from === file.path || e.to === file.path).length;
-  if (connected) {
+  if (connected && lexicalSignals > 0) {
     score += Math.min(connected * 2, 10);
     why.push("dependency edge");
+  }
+  if (changedPaths.has(file.path)) {
+    score += 12;
+    why.push("recent git change");
   }
   const penalty = categoryPenalty(file, taskWords);
   score += penalty.penalty;
@@ -182,8 +236,10 @@ function noiseNotes(ranked: Ranked[]): string[] {
 export async function generateDossier(repoRoot: string, task: string, budgetChars = 6000, maxFiles = 12): Promise<{ markdown: string; ranked: Ranked[]; truncated: boolean }> {
   const index = await loadFreshIndex(repoRoot);
   const taskWords = taskTerms(task);
+  const concreteTerms = concreteTaskTerms(task);
+  const changedPaths = await changedGitPaths(repoRoot);
   const ranked = index.files
-    .map((file) => scoreFile(file, taskWords, index))
+    .map((file) => scoreFile(file, taskWords, concreteTerms, changedPaths, index))
     .filter((r) => r.score > 0)
     .sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path))
     .slice(0, maxFiles);
@@ -248,11 +304,12 @@ export type MeasuredSearchResult = {
 export async function searchIndexMeasured(repoRoot: string, query: string, limit = 10): Promise<MeasuredSearchResult> {
   const index = await loadFreshIndex(repoRoot);
   const queryWords = searchTerms(query);
+  const concreteTerms = concreteTaskTerms(query);
   const unboundedResults = !queryWords.length && /^[\w./-]+$/.test(query.trim())
     ? inventorySearch(index, query)
     : index.files
       .map((file) => {
-        const ranked = scoreFile(file, queryWords, index);
+        const ranked = scoreFile(file, queryWords, concreteTerms, new Set<string>(), index);
         const content = contentSignals(repoRoot, file, query, queryWords);
         return {
           ...ranked,
