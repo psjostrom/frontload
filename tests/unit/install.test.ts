@@ -461,6 +461,43 @@ describe("installer", () => {
     }
   });
 
+  it("skips upgrade when already at the latest version", () => {
+    const oldPath = process.env.PATH;
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-global-upgrade-current-bin-"));
+    process.env.PATH = bin;
+    writeExecutable(bin);
+    try {
+      const calls: Array<{ command: string; args: string[] }> = [];
+      const upgraded = upgradeGlobalFrontload("npm", (command, args) => {
+        calls.push({ command, args });
+      }, () => "0.2.2");
+
+      expect(upgraded.action).toBe("skipped");
+      expect(upgraded.notes[0]).toContain("Already at the latest version (0.2.2)");
+      expect(calls).toEqual([]);
+    } finally {
+      process.env.PATH = oldPath;
+    }
+  });
+
+  it("proceeds with upgrade when version check fails", () => {
+    const oldPath = process.env.PATH;
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-global-upgrade-version-fail-bin-"));
+    process.env.PATH = bin;
+    writeExecutable(bin);
+    try {
+      const calls: Array<{ command: string; args: string[] }> = [];
+      const upgraded = upgradeGlobalFrontload("npm", (command, args) => {
+        calls.push({ command, args });
+      }, () => undefined);
+
+      expect(upgraded.action).toBe("updated");
+      expect(calls).toEqual([{ command: "npm", args: ["install", "-g", "frontload@latest"] }]);
+    } finally {
+      process.env.PATH = oldPath;
+    }
+  });
+
   it("upgrades only existing Codex configuration and refreshes managed skills", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-codex-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-codex-"));
