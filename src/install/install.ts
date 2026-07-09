@@ -519,7 +519,7 @@ export function upgradeGlobalFrontload(packageManager: PackageManager = "npm", r
   const currentVersion = packageVersion;
   const latestVersion = versionGetter(packageManager);
 
-  if (latestVersion && currentVersion === latestVersion) {
+if (wasInstalled && latestVersion && currentVersion === latestVersion) {
     return {
       action: "skipped",
       command: install.command,
