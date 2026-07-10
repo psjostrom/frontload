@@ -13,7 +13,8 @@ export type AgentCheckboxState = {
 
 const agentChoices: Array<{ agent: AgentName; label: string }> = [
   { agent: "codex", label: "Codex" },
-  { agent: "claude", label: "Claude Code" }
+  { agent: "claude", label: "Claude Code" },
+  { agent: "opencode", label: "opencode" }
 ];
 
 export function createAgentCheckboxState(detectedAgents: AgentName[]): AgentCheckboxState {

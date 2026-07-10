@@ -76,7 +76,7 @@ sys.exit(1)
     "-c",
     runner,
     Buffer.from(input, "utf8").toString("base64"),
-    "Choose Claude Code MCP config scope.",
+    "Choose Claude Code and opencode MCP config scope.",
     command,
     ...args
   ], { env, timeout: 15000 });

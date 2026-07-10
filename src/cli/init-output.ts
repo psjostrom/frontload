@@ -79,6 +79,23 @@ function agentLines(agent: InstallResult, root?: string, home?: string): string[
   ];
 }
 
+function agentEditorName(agent: string): string {
+  if (agent === "codex") return "Codex";
+  if (agent === "claude") return "Claude Code";
+  return "opencode";
+}
+
+function joinEditorNames(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function mcpVerifyStep(agent: string): string {
+  if (agent === "opencode") return "Run `opencode mcp list` and confirm frontload is connected.";
+  return "Run /mcp and confirm frontload is listed.";
+}
+
 function nextSteps(result: InitOutput): string[] {
   if (result.globalInstall?.action === "manual") {
     return [
@@ -87,33 +104,31 @@ function nextSteps(result: InitOutput): string[] {
     ];
   }
   const agents = result.agents?.map((agent) => agent.agent) ?? [];
-  if (agents.includes("codex") && agents.includes("claude")) {
+  if (agents.length === 0) {
     return [
-      "  1. Restart Codex and Claude Code.",
-      "  2. Run /mcp in each editor and confirm frontload is listed.",
-      "  3. In Codex, open /hooks to review and approve the Frontload command hooks.",
-      "  4. Use your agents normally; the Frontload skills tell them to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration."
+      "  1. Review frontload.config.json.",
+      "  2. Run frontload index when you want to build repo context."
     ];
   }
-  if (agents.includes("codex")) {
-    return [
-      "  1. Restart Codex.",
-      "  2. Run /mcp and confirm frontload is listed.",
-      "  3. Open /hooks to review and approve the Frontload command hooks.",
-      "  4. Use Codex normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration."
-    ];
-  }
-  if (agents.includes("claude")) {
-    return [
-      "  1. Restart Claude Code.",
-      "  2. Run /mcp and confirm frontload is listed.",
-      "  3. Use Claude Code normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration."
-    ];
-  }
-  return [
-    "  1. Review frontload.config.json.",
-    "  2. Run frontload index when you want to build repo context."
+  const editorNames = agents.map(agentEditorName);
+  const steps: string[] = [
+    `  1. Restart ${joinEditorNames(editorNames)}.`,
+    agents.length > 1
+      ? "  2. Run /mcp in each editor and confirm frontload is listed."
+      : `  2. ${mcpVerifyStep(agents[0])}`
   ];
+  let stepNo = 3;
+  if (agents.includes("codex")) {
+    const hooksText = agents.length > 1
+      ? "In Codex, open /hooks to review and approve the Frontload command hooks."
+      : "Open /hooks to review and approve the Frontload command hooks.";
+    steps.push(`  ${stepNo}. ${hooksText}`);
+    stepNo += 1;
+  }
+  steps.push(agents.length > 1
+    ? `  ${stepNo}. Use your agents normally; the Frontload skills tell them to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.`
+    : `  ${stepNo}. Use ${editorNames[0]} normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.`);
+  return steps;
 }
 
 function upgradeNextSteps(result: UpgradeOutput): string[] {
@@ -124,30 +139,26 @@ function upgradeNextSteps(result: UpgradeOutput): string[] {
     ];
   }
   const agents = result.agents?.map((agent) => agent.agent) ?? [];
-  if (agents.includes("codex") && agents.includes("claude")) {
+  if (agents.length === 0) {
     return [
-      "  1. Restart Codex and Claude Code.",
-      "  2. Run /mcp in each editor and confirm frontload is listed.",
-      "  3. In Codex, open /hooks to review and approve the Frontload command hooks."
+      "  1. Run frontload init if you want to configure agent integration.",
+      "  2. Run frontload doctor --dogfood after configuring an agent."
     ];
   }
-  if (agents.includes("codex")) {
-    return [
-      "  1. Restart Codex.",
-      "  2. Run /mcp and confirm frontload is listed.",
-      "  3. Open /hooks to review and approve the Frontload command hooks."
-    ];
-  }
-  if (agents.includes("claude")) {
-    return [
-      "  1. Restart Claude Code.",
-      "  2. Run /mcp and confirm frontload is listed."
-    ];
-  }
-  return [
-    "  1. Run frontload init if you want to configure agent integration.",
-    "  2. Run frontload doctor --dogfood after configuring an agent."
+  const editorNames = agents.map(agentEditorName);
+  const steps: string[] = [
+    `  1. Restart ${joinEditorNames(editorNames)}.`,
+    agents.length > 1
+      ? "  2. Run /mcp in each editor and confirm frontload is listed."
+      : `  2. ${mcpVerifyStep(agents[0])}`
   ];
+  if (agents.includes("codex")) {
+    const hooksText = agents.length > 1
+      ? "In Codex, open /hooks to review and approve the Frontload command hooks."
+      : "Open /hooks to review and approve the Frontload command hooks.";
+    steps.push(`  3. ${hooksText}`);
+  }
+  return steps;
 }
 
 export function formatInitOutput(result: InitOutput): string {
