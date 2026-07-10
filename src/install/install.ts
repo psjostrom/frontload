@@ -427,6 +427,10 @@ function isEphemeralPackagePath(value: string): boolean {
   return normalized.includes("/_npx/") || normalized.includes("/dlx-") || normalized.includes("/.pnpm/dlx/") || normalized.includes("/node_modules/.bin/");
 }
 
+export function needsShellForWindowsShim(executable: string, platform: string = process.platform): boolean {
+  return platform === "win32" && /\.(cmd|bat)$/i.test(executable);
+}
+
 export function resolveGlobalExecutable(bin = "frontload", envPath = process.env.PATH ?? ""): string | undefined {
   return findExecutablesOnPath(bin, envPath).find((executable) => !isEphemeralPackagePath(executable));
 }

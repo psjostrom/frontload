@@ -4,7 +4,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { hookDefinitions } from "../../src/hooks/definitions.js";
-import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
+import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, needsShellForWindowsShim, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
 import { stateExcludeStatus } from "../../src/utils/path.js";
 
 function writeExecutable(dir: string, name = "frontload"): string {
@@ -408,6 +408,15 @@ describe("installer", () => {
     expect(detectPackageManager("pnpm/10.14.0 npm/? node/?")).toBe("pnpm");
     expect(globalInstallCommand()).toEqual({ packageManager: "npm", command: "npm", args: ["install", "-g", "frontload"] });
     expect(globalInstallCommand("bun")).toEqual({ packageManager: "bun", command: "bun", args: ["add", "-g", "frontload"] });
+  });
+
+  it("detects Windows .cmd and .bat shims requiring shell invocation", () => {
+    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.cmd", "win32")).toBe(true);
+    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.CMD", "win32")).toBe(true);
+    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.bat", "win32")).toBe(true);
+    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.exe", "win32")).toBe(false);
+    expect(needsShellForWindowsShim("/usr/local/bin/frontload", "darwin")).toBe(false);
+    expect(needsShellForWindowsShim("/usr/local/bin/frontload.cmd", "linux")).toBe(false);
   });
 
   it("looks past temporary npx shims when checking for global installs", () => {

@@ -18,7 +18,7 @@ import { compactRankedResults, generateDossier, searchIndexMeasured } from "../d
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
-import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, needsShellForWindowsShim, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
@@ -386,7 +386,8 @@ function installedFrontloadCheck(repoRoot: string): InstalledFrontloadCheck {
     const version = execFileSync(executable, ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 5000
+      timeout: 5000,
+      ...(needsShellForWindowsShim(executable) ? { shell: true } : {})
     }).trim();
     const packageRoot = packageRootFromExecutable(executable);
     let matchesTargetPackage = false;
@@ -824,6 +825,8 @@ program.command("run").option("--repo <repo>", "repository root", ".").option("-
     }
   );
   print(measuredResult.output);
+  const { exitCode } = measuredResult.result;
+  process.exitCode = typeof exitCode === "number" ? exitCode : 1;
 });
 
 program.command("diff").option("--repo <repo>", "repository root", ".").option("--staged").option("--tracked-only", "omit untracked files").action(async (opts) => {
