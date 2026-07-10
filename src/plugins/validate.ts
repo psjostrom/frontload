@@ -129,6 +129,10 @@ export function validatePlugin(root: string, host: "codex" | "claude" | "opencod
     assertFile(hooksFile, "hooks config", checked);
     assertFrontloadHook(hooksConfigSchema.parse(readJson(hooksFile)), host as HookHost, hooksFile);
   }
+  if (host === "opencode") {
+    const pluginFile = path.join(absRoot, "plugins/frontload-gate.js");
+    assertFile(pluginFile, "Frontload gate plugin", checked);
+  }
   assertFile(skillFile, "Frontload skill", checked);
   assertSkill(skillFile);
 

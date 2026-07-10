@@ -178,6 +178,7 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".config/opencode/skills/frontload/SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".config/opencode/plugins/frontload-gate.js"))).toBe(true);
     expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(true);
     expect(claudeConfig.mcpServers.frontload).toEqual({
       type: "stdio",
@@ -250,7 +251,8 @@ describe("installer", () => {
     expect(result.agents.map((agent) => agent.agent)).toEqual(["opencode"]);
     expect(result.agents[0].writes.map((write) => path.relative(repo, write.path))).toEqual([
       "opencode.json",
-      path.relative(repo, path.join(home, ".config/opencode/skills/frontload"))
+      path.relative(repo, path.join(home, ".config/opencode/skills/frontload")),
+      path.relative(repo, path.join(home, ".config/opencode/plugins/frontload-gate.js"))
     ]);
     expect(opencodeConfig.mcp.frontload).toEqual({
       type: "local",
@@ -261,6 +263,10 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(home, ".config/opencode/skills/frontload/SKILL.md"))).toBe(true);
     expect(fs.readFileSync(path.join(home, ".config/opencode/skills/frontload/SKILL.md"), "utf8")).toBe(
       fs.readFileSync(path.resolve("plugins/opencode/skills/frontload/SKILL.md"), "utf8")
+    );
+    expect(fs.existsSync(path.join(home, ".config/opencode/plugins/frontload-gate.js"))).toBe(true);
+    expect(fs.readFileSync(path.join(home, ".config/opencode/plugins/frontload-gate.js"), "utf8")).toBe(
+      fs.readFileSync(path.resolve("plugins/opencode/plugins/frontload-gate.js"), "utf8")
     );
     expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
@@ -279,6 +285,7 @@ describe("installer", () => {
       timeout: 20000
     });
     expect(fs.existsSync(path.join(home, ".config/opencode/skills/frontload/SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".config/opencode/plugins/frontload-gate.js"))).toBe(true);
     expect(fs.existsSync(path.join(repo, "opencode.json"))).toBe(false);
   });
 

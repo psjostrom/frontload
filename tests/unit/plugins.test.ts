@@ -25,7 +25,7 @@ describe("plugin packages", () => {
   it("validates the opencode plugin package with the TypeScript validator", () => {
     const result = validatePlugin(path.join(pluginRoot, "opencode"), "opencode");
     expect(result.summary).toContain("passed");
-    expect(result.checked).toHaveLength(1);
+    expect(result.checked).toHaveLength(2);
     expect(result.warnings).toEqual([]);
   });
 

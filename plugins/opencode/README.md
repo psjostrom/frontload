@@ -48,11 +48,12 @@ opencode does not need a manual `frontload index` step before each task. The
 MCP dossier and search tools build the repo index when it is missing and
 refresh changed files automatically.
 
-opencode does not currently expose a Claude-equivalent native tool hook runtime
-that Frontload can configure declaratively. Context savings come from the
-Frontload skill guiding the agent toward MCP tools and from the budgeted
-responses those tools return. A JS plugin gate for automatic command rewriting
-and output bounding is planned as a follow-up.
+Init also installs a gate plugin (`frontload-gate.js`) to
+`~/.config/opencode/plugins/`. The gate intercepts `bash` tool calls through
+opencode's `tool.execute.before` and `tool.execute.after` plugin hooks,
+applying the same budget policy as the Codex and Claude Code hooks: broad
+shell commands are rewritten through Frontload summaries, noisy output is
+compacted to the configured budget cap.
 
 ## Config Scope
 
