@@ -91,6 +91,11 @@ function joinEditorNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+function mcpVerifyStep(agent: string): string {
+  if (agent === "opencode") return "Run `opencode mcp list` and confirm frontload is connected.";
+  return "Run /mcp and confirm frontload is listed.";
+}
+
 function nextSteps(result: InitOutput): string[] {
   if (result.globalInstall?.action === "manual") {
     return [
@@ -110,7 +115,7 @@ function nextSteps(result: InitOutput): string[] {
     `  1. Restart ${joinEditorNames(editorNames)}.`,
     agents.length > 1
       ? "  2. Run /mcp in each editor and confirm frontload is listed."
-      : "  2. Run /mcp and confirm frontload is listed."
+      : `  2. ${mcpVerifyStep(agents[0])}`
   ];
   let stepNo = 3;
   if (agents.includes("codex")) {
@@ -145,7 +150,7 @@ function upgradeNextSteps(result: UpgradeOutput): string[] {
     `  1. Restart ${joinEditorNames(editorNames)}.`,
     agents.length > 1
       ? "  2. Run /mcp in each editor and confirm frontload is listed."
-      : "  2. Run /mcp and confirm frontload is listed."
+      : `  2. ${mcpVerifyStep(agents[0])}`
   ];
   if (agents.includes("codex")) {
     const hooksText = agents.length > 1

@@ -110,7 +110,7 @@ describe("init output formatting", () => {
     });
 
     expect(output).toContain("Restart opencode.");
-    expect(output).toContain("Run /mcp and confirm frontload is listed.");
+    expect(output).toContain("Run `opencode mcp list` and confirm frontload is connected.");
     expect(output).toContain("Use opencode normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.");
     expect(output).not.toContain("/hooks");
   });
@@ -211,7 +211,7 @@ describe("upgrade output formatting", () => {
 
     expect(output).toContain("| Opencode setup |");
     expect(output).toContain("Restart opencode.");
-    expect(output).toContain("Run /mcp and confirm frontload is listed.");
+    expect(output).toContain("Run `opencode mcp list` and confirm frontload is connected.");
     expect(output).not.toContain("/hooks");
   });
 

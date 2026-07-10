@@ -23,6 +23,7 @@ import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { BaselineKind } from "../types.js";
 import { ensureStateDir, resolveRepo, stateDir, stateExcludeStatus } from "../utils/path.js";
+import { readJsonc } from "../utils/jsonc.js";
 import { packageVersion, packageVersionFrom } from "../version.js";
 import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPrompt, selectedAgents, type AgentCheckboxState } from "./checkbox.js";
 import { formatInitOutput, formatUpgradeOutput } from "./init-output.js";
@@ -308,42 +309,52 @@ type OpencodeConfigCheck = {
   configPath: string;
   configScope: "project" | "global" | "none";
   configured: boolean;
+  type?: string;
+  enabled?: boolean;
+  commandValid: boolean;
   repo?: string;
   repoIsAbsolute: boolean;
   repoMatches: boolean;
 };
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function opencodeConfigCheck(repoRoot: string, homeDir: string): OpencodeConfigCheck {
   const projectConfig = mcpConfigAdapters.opencode.projectPath(repoRoot);
   const globalConfig = mcpConfigAdapters.opencode.globalPath(homeDir);
   for (const [configPath, scope] of [[projectConfig, "project"] as const, [globalConfig, "global"] as const]) {
     if (!configPath || !fs.existsSync(configPath)) continue;
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-      const mcp = typeof config.mcp === "object" && config.mcp !== null && !Array.isArray(config.mcp) ? config.mcp as Record<string, unknown> : {};
-      const frontload = typeof mcp.frontload === "object" && mcp.frontload !== null && !Array.isArray(mcp.frontload) ? mcp.frontload as Record<string, unknown> : {};
-      if (!frontload || typeof frontload !== "object") continue;
-      const command = Array.isArray(frontload.command) ? frontload.command as unknown[] : [];
-      const repo = repoArg(command);
-      if (repo) {
-        const repoIsAbsolute = path.isAbsolute(repo);
-        return {
-          configPath,
-          configScope: scope,
-          configured: true,
-          repo,
-          repoIsAbsolute,
-          repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false
-        };
-      }
-    } catch {
-      // Keep checking the other scope.
+    const config = readJsonc<Record<string, unknown>>(configPath, {});
+    const mcp = isJsonObject(config.mcp) ? config.mcp : {};
+    const frontload = isJsonObject(mcp.frontload) ? mcp.frontload : {};
+    if (!isJsonObject(frontload)) continue;
+    const type = typeof frontload.type === "string" ? frontload.type : undefined;
+    const enabled = typeof frontload.enabled === "boolean" ? frontload.enabled : undefined;
+    const command = Array.isArray(frontload.command) ? frontload.command as unknown[] : [];
+    const commandValid = command[0] === "frontload" && command.includes("mcp");
+    const repo = commandValid ? repoArg(command) : undefined;
+    if (repo) {
+      const repoIsAbsolute = path.isAbsolute(repo);
+      return {
+        configPath,
+        configScope: scope,
+        configured: true,
+        type,
+        enabled,
+        commandValid,
+        repo,
+        repoIsAbsolute,
+        repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false
+      };
     }
   }
   return {
     configPath: projectConfig ?? globalConfig ?? "",
     configScope: "none",
     configured: false,
+    commandValid: false,
     repoIsAbsolute: false,
     repoMatches: false
   };

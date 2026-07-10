@@ -18,8 +18,10 @@ npx frontload init
 ```
 
 Init writes the Frontload MCP server entry to project `opencode.json` by
-default, or to `~/.config/opencode/opencode.json` with `--scope global`. It also
-copies the Frontload skill to `~/.config/opencode/skills/frontload`.
+default, or to `~/.config/opencode/opencode.json` with `--scope global`. If
+`opencode.jsonc` already exists, init writes to that instead and preserves
+comments. It also copies the Frontload skill to
+`~/.config/opencode/skills/frontload`.
 
 Restart opencode after init so it loads the MCP server and skill.
 
@@ -54,10 +56,11 @@ and output bounding is planned as a follow-up.
 
 ## Config Scope
 
-Init writes the MCP entry to project `opencode.json` by default. Frontload pins
-the MCP server to an absolute repo path in that file, so if your team shares
-`opencode.json` in git, either add it to `.gitignore` or use `--scope global`
-to write to `~/.config/opencode/opencode.json` instead. opencode merges project
+Init writes the MCP entry to project `opencode.json` (or existing
+`opencode.jsonc`) by default. Frontload pins the MCP server to an absolute repo
+path in that file, so if your team shares it in git, either add it to
+`.gitignore` or use `--scope global` to write to
+`~/.config/opencode/opencode.json` instead. opencode merges project
 and global config, so a global entry still applies when you open the repo.
 
 ## Local Plugin Development

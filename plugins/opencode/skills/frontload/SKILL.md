@@ -7,16 +7,19 @@ description: Use when working in a code repository to reduce context cost with F
 
 Use Frontload before broad repository exploration.
 
+opencode registers MCP server tools with the server name as a prefix, so the
+Frontload MCP server (named `frontload`) exposes tools as `frontload_fl_*`.
+
 Default workflow:
 
-1. Start with `fl_repo_dossier` for the current task.
-2. Use `fl_search` when the dossier says ranking confidence is noisy or when you need concrete symbols.
-3. Use `fl_read_budgeted` for contiguous file windows instead of raw full-file reads. Prefer the raw `excerpt` for edits when `editSafe` is true, and use `numberedExcerpt` only for line references when it is present.
-4. Run tests, typechecks, lint, and build commands through `fl_run_summary`.
-5. Use `fl_git_diff_summary` before reviewing changes.
-6. Use `fl_budget_report` before repeating repair loops.
+1. Start with `frontload_fl_repo_dossier` for the current task.
+2. Use `frontload_fl_search` when the dossier says ranking confidence is noisy or when you need concrete symbols.
+3. Use `frontload_fl_read_budgeted` for contiguous file windows instead of raw full-file reads. Prefer the raw `excerpt` for edits when `editSafe` is true, and use `numberedExcerpt` only for line references when it is present.
+4. Run tests, typechecks, lint, and build commands through `frontload_fl_run_summary`.
+5. Use `frontload_fl_git_diff_summary` before reviewing changes.
+6. Use `frontload_fl_budget_report` before repeating repair loops.
 
-Do not ask the user to run `frontload index` before normal work; `fl_repo_dossier` and `fl_search` build or refresh the index automatically.
+Do not ask the user to run `frontload index` before normal work; `frontload_fl_repo_dossier` and `frontload_fl_search` build or refresh the index automatically.
 
 Avoid raw `find .`, `ls -R`, broad recursive grep, full lockfile dumps, generated fixture dumps, and unwrapped test commands.
 

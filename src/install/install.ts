@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
+import { readJsonc, removeJsoncValue, writeJsoncValue } from "../utils/jsonc.js";
 import { ensureStateDir } from "../utils/path.js";
 import { packageVersion } from "../version.js";
 
@@ -167,42 +168,55 @@ function hasJsonMcpServer(file: string): boolean {
   return typeof config.mcpServers === "object" && config.mcpServers !== null && !Array.isArray(config.mcpServers) && "frontload" in config.mcpServers;
 }
 
-function opencodeMcpServer(entry: McpEntry): Record<string, unknown> {
+function opencodeMcpServer(entry: McpEntry, current?: unknown): Record<string, unknown> {
+  const enabled = isJsonObject(current) && typeof current.enabled === "boolean" ? current.enabled : true;
   return {
     type: "local",
     command: [entry.command, ...entry.args],
-    enabled: true,
+    enabled,
     timeout: 20000
   };
 }
 
+function isFrontloadOpencodeEntry(entry: unknown): boolean {
+  if (!isJsonObject(entry)) return false;
+  if (entry.type !== "local") return false;
+  const command = Array.isArray(entry.command) ? entry.command as unknown[] : [];
+  return command[0] === "frontload" && command.includes("mcp") && repoArgFromArgs(command) !== undefined;
+}
+
+function opencodeConfigPathFor(dir: string): string {
+  const json = path.join(dir, "opencode.json");
+  const jsonc = path.join(dir, "opencode.jsonc");
+  if (fs.existsSync(json)) return json;
+  if (fs.existsSync(jsonc)) return jsonc;
+  return json;
+}
+
 function upsertOpencodeMcpServer(file: string, entry: McpEntry, force: boolean): WriteResult {
   const existed = fs.existsSync(file);
-  const config = readJson<Record<string, unknown>>(file, {});
+  const config = readJsonc<Record<string, unknown>>(file, {});
   const mcp = isJsonObject(config.mcp) ? config.mcp as Record<string, unknown> : {};
-  const next = opencodeMcpServer(entry);
-  if (!force && sameJson(mcp.frontload, next)) return { path: file, action: "skipped" };
-  mcp.frontload = next;
-  config.mcp = mcp;
-  writeJson(file, config);
+  const current = mcp.frontload;
+  const next = opencodeMcpServer(entry, current);
+  if (!force && sameJson(current, next)) return { path: file, action: "skipped" };
+  writeJsoncValue(file, ["mcp", "frontload"], next, config);
   return { path: file, action: existed ? "updated" : "created" };
 }
 
 function removeOpencodeMcpServer(file: string): boolean {
   if (!fs.existsSync(file)) return false;
-  const config = readJson<Record<string, unknown>>(file, {});
-  if (typeof config.mcp !== "object" || config.mcp === null || Array.isArray(config.mcp)) return false;
-  const mcp = config.mcp as Record<string, unknown>;
-  if (!("frontload" in mcp)) return false;
-  delete mcp.frontload;
-  writeJson(file, config);
-  return true;
+  const config = readJsonc<Record<string, unknown>>(file, {});
+  const mcp = isJsonObject(config.mcp) ? config.mcp : {};
+  if (!isFrontloadOpencodeEntry(mcp.frontload)) return false;
+  return removeJsoncValue(file, ["mcp", "frontload"]);
 }
 
 function hasOpencodeMcpServer(file: string): boolean {
   if (!fs.existsSync(file)) return false;
-  const config = readJson<Record<string, unknown>>(file, {});
-  return typeof config.mcp === "object" && config.mcp !== null && !Array.isArray(config.mcp) && "frontload" in config.mcp;
+  const config = readJsonc<Record<string, unknown>>(file, {});
+  const mcp = isJsonObject(config.mcp) ? config.mcp : {};
+  return isFrontloadOpencodeEntry(mcp.frontload);
 }
 
 function tomlString(value: string): string {
@@ -431,8 +445,8 @@ export const mcpConfigAdapters: Record<AgentName, McpConfigAdapter> = {
   opencode: {
     name: "opencode",
     detect: (homeDir) => fs.existsSync(path.join(homeDir, ".config/opencode")),
-    projectPath: (repoRoot) => path.join(repoRoot, "opencode.json"),
-    globalPath: (homeDir) => path.join(homeDir, ".config/opencode/opencode.json"),
+    projectPath: (repoRoot) => opencodeConfigPathFor(repoRoot),
+    globalPath: (homeDir) => opencodeConfigPathFor(path.join(homeDir, ".config/opencode")),
     write: upsertOpencodeMcpServer,
     remove: removeOpencodeMcpServer,
     hasFrontloadEntry: hasOpencodeMcpServer
@@ -786,9 +800,10 @@ function existingClaudeRepoArg(configPath: string): string | undefined {
 }
 
 function existingOpencodeRepoArg(configPath: string): string | undefined {
-  const config = readJson<Record<string, unknown>>(configPath, {});
+  const config = readJsonc<Record<string, unknown>>(configPath, {});
   const mcp = isJsonObject(config.mcp) ? config.mcp : {};
   const frontload = isJsonObject(mcp.frontload) ? mcp.frontload : {};
+  if (!isFrontloadOpencodeEntry(frontload)) return undefined;
   return repoArgFromArgs(frontload.command);
 }
 

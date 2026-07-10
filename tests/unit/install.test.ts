@@ -4,7 +4,8 @@ import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { hookDefinitions } from "../../src/hooks/definitions.js";
-import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
+import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
+import { readJsonc } from "../../src/utils/jsonc.js";
 import { stateExcludeStatus } from "../../src/utils/path.js";
 
 function writeExecutable(dir: string, name = "frontload"): string {
@@ -861,7 +862,7 @@ describe("installer", () => {
       mcp: {
         frontload: {
           type: "local",
-          command: ["old-frontload", "mcp", "--repo", "."],
+          command: ["frontload", "mcp", "--repo", "."],
           enabled: true
         }
       }
@@ -895,7 +896,7 @@ describe("installer", () => {
       mcp: {
         frontload: {
           type: "local",
-          command: ["old-frontload", "mcp", "--repo", "."],
+          command: ["frontload", "mcp", "--repo", "."],
           enabled: true
         }
       }
@@ -942,5 +943,94 @@ describe("installer", () => {
     const config = JSON.parse(fs.readFileSync(path.join(repo, "opencode.json"), "utf8"));
 
     expect(config.mcp.frontload.command).toEqual(["frontload", "mcp", "--repo", repo]);
+  });
+
+  it("does not treat a non-frontload opencode mcp entry as managed", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-opencode-unmanaged-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-opencode-unmanaged-"));
+    fs.writeFileSync(path.join(repo, "opencode.json"), JSON.stringify({
+      mcp: {
+        frontload: { type: "remote", url: "https://example.com/mcp", enabled: true }
+      }
+    }, null, 2));
+
+    expect(mcpConfigAdapters.opencode.hasFrontloadEntry(path.join(repo, "opencode.json"))).toBe(false);
+    const result = upgradeAll(repo, home);
+    expect(result.agents.map((agent) => agent.agent)).toEqual([]);
+  });
+
+  it("preserves disabled opencode entries during upgrade instead of force-enabling", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-opencode-disabled-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-opencode-disabled-"));
+    fs.writeFileSync(path.join(repo, "opencode.json"), JSON.stringify({
+      mcp: {
+        frontload: {
+          type: "local",
+          command: ["frontload", "mcp", "--repo", "."],
+          enabled: false,
+          timeout: 20000
+        }
+      }
+    }, null, 2));
+
+    upgradeAll(repo, home);
+    const config = JSON.parse(fs.readFileSync(path.join(repo, "opencode.json"), "utf8"));
+
+    expect(config.mcp.frontload.enabled).toBe(false);
+    expect(config.mcp.frontload.command).toEqual(["frontload", "mcp", "--repo", repo]);
+  });
+
+  it("reads and writes opencode.jsonc config", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-opencode-jsonc-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-opencode-jsonc-"));
+    fs.writeFileSync(path.join(repo, "opencode.jsonc"), `{
+  // team-shared config
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "existing": { "type": "remote", "url": "https://example.com/mcp" }
+  }
+}`);
+
+    initAll(repo, ["opencode"], home);
+    const configPath = path.join(repo, "opencode.jsonc");
+    const text = fs.readFileSync(configPath, "utf8");
+
+    expect(text).toContain("// team-shared config");
+    expect(text).toContain('"existing"');
+    const config = readJsonc<Record<string, unknown>>(configPath, {});
+    const mcp = config.mcp as Record<string, unknown>;
+    expect(mcp.frontload).toEqual({
+      type: "local",
+      command: ["frontload", "mcp", "--repo", repo],
+      enabled: true,
+      timeout: 20000
+    });
+    expect(mcp.existing).toEqual({ type: "remote", url: "https://example.com/mcp" });
+  });
+
+  it("upgrades opencode.jsonc config", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-opencode-jsonc-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-opencode-jsonc-"));
+    fs.writeFileSync(path.join(repo, "opencode.jsonc"), `{
+  // team config
+  "mcp": {
+    "frontload": {
+      "type": "local",
+      "command": ["frontload", "mcp", "--repo", "."],
+      "enabled": true
+    }
+  }
+}`);
+    const skillFile = path.join(home, ".config/opencode/skills/frontload/SKILL.md");
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+
+    upgradeAll(repo, home);
+    const text = fs.readFileSync(path.join(repo, "opencode.jsonc"), "utf8");
+
+    expect(text).toContain("// team config");
+    const config = readJsonc<Record<string, unknown>>(path.join(repo, "opencode.jsonc"), {});
+    const mcp = config.mcp as Record<string, unknown>;
+    expect((mcp.frontload as Record<string, unknown>).command).toEqual(["frontload", "mcp", "--repo", repo]);
   });
 });

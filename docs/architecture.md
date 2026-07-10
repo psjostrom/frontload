@@ -5,7 +5,8 @@ runtime.
 
 When you run `npx frontload init`, Frontload creates project state in
 `.frontload/` and can configure supported agents (Codex, Claude Code, opencode)
-to use its MCP server and hooks.
+to use its MCP server. Codex and Claude Code also install command hooks;
+opencode is MCP plus the Frontload skill in this phase (a hook gate is planned).
 
 The workflow has four local parts:
 
