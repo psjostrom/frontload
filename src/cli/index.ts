@@ -89,7 +89,7 @@ const program = new Command();
 program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version(packageVersion);
 
 function detectedAgents(homeDir: string): AgentName[] {
-  return (["codex", "claude"] as const).filter((agent) => mcpConfigAdapters[agent].detect(homeDir));
+  return (["codex", "claude", "opencode"] as const).filter((agent) => mcpConfigAdapters[agent].detect(homeDir));
 }
 
 function renderAgentCheckboxPrompt(output: NodeJS.WriteStream, state: AgentCheckboxState, previousLineCount: number): number {
@@ -219,7 +219,7 @@ async function promptApproveGlobalUpgrade(commandText: string): Promise<boolean>
   }
 }
 
-function configuresAgent(agents: Array<"codex" | "claude" | "all">, agent: "codex" | "claude"): boolean {
+function configuresAgent(agents: Array<"codex" | "claude" | "opencode" | "all">, agent: "codex" | "claude" | "opencode"): boolean {
   return agents.includes("all") || agents.includes(agent);
 }
 
@@ -303,6 +303,59 @@ type InstalledFrontloadCheck = {
   regularInstall?: boolean;
   error?: string;
 };
+
+type OpencodeConfigCheck = {
+  configPath: string;
+  configScope: "project" | "global" | "none";
+  configured: boolean;
+  repo?: string;
+  repoIsAbsolute: boolean;
+  repoMatches: boolean;
+};
+
+function opencodeConfigCheck(repoRoot: string, homeDir: string): OpencodeConfigCheck {
+  const projectConfig = mcpConfigAdapters.opencode.projectPath(repoRoot);
+  const globalConfig = mcpConfigAdapters.opencode.globalPath(homeDir);
+  for (const [configPath, scope] of [[projectConfig, "project"] as const, [globalConfig, "global"] as const]) {
+    if (!configPath || !fs.existsSync(configPath)) continue;
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const mcp = typeof config.mcp === "object" && config.mcp !== null && !Array.isArray(config.mcp) ? config.mcp as Record<string, unknown> : {};
+      const frontload = typeof mcp.frontload === "object" && mcp.frontload !== null && !Array.isArray(mcp.frontload) ? mcp.frontload as Record<string, unknown> : {};
+      if (!frontload || typeof frontload !== "object") continue;
+      const command = Array.isArray(frontload.command) ? frontload.command as unknown[] : [];
+      const repo = repoArg(command);
+      if (repo) {
+        const repoIsAbsolute = path.isAbsolute(repo);
+        return {
+          configPath,
+          configScope: scope,
+          configured: true,
+          repo,
+          repoIsAbsolute,
+          repoMatches: repoIsAbsolute ? path.resolve(repo) === repoRoot : false
+        };
+      }
+    } catch {
+      // Keep checking the other scope.
+    }
+  }
+  return {
+    configPath: projectConfig ?? globalConfig ?? "",
+    configScope: "none",
+    configured: false,
+    repoIsAbsolute: false,
+    repoMatches: false
+  };
+}
+
+function repoArg(args: unknown[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--repo" && typeof args[i + 1] === "string") return args[i + 1] as string;
+    if (typeof args[i] === "string" && (args[i] as string).startsWith("--repo=")) return (args[i] as string).slice("--repo=".length);
+  }
+  return undefined;
+}
 
 type CodexDogfoodCheck = {
   configPath: string;
@@ -644,15 +697,15 @@ async function dogfoodCheck(repoRoot: string, homeDir: string, codex?: CodexDogf
 program
   .command("init")
   .option("--repo <repo>", "repository root", ".")
-  .option("--agents <agents>", "comma-separated agents to configure: codex,claude,all,none")
-  .option("--scope <scope>", "Claude Code MCP config scope: project or global")
+  .option("--agents <agents>", "comma-separated agents to configure: codex,claude,opencode,all,none")
+  .option("--scope <scope>", "Claude Code and opencode MCP config scope: project or global")
   .option("--home <dir>", "home directory for agent plugin installation")
   .option("--force")
   .option("--yes", "approve installing frontload globally if needed")
   .action(async (opts) => {
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     const agents = opts.agents === undefined ? await promptAgents(homeDir) : parseAgents(opts.agents);
-    const scope = opts.scope === undefined && configuresAgent(agents, "claude") ? await promptConfigScope() : parseConfigScope(opts.scope);
+    const scope = opts.scope === undefined && (configuresAgent(agents, "claude") || configuresAgent(agents, "opencode")) ? await promptConfigScope() : parseConfigScope(opts.scope);
     const globalInstall = agents.length > 0 ? await ensureGlobalFrontload(!!opts.yes) : undefined;
     if (globalInstall?.action === "manual") {
       process.stdout.write(formatInitOutput({ summary: "Frontload was not installed globally; MCP config was not written.", globalInstall }));
@@ -730,6 +783,7 @@ program.command("doctor")
       mcpServer: true,
       installedCommand: installedFrontloadCheck(repoRoot),
       codex,
+      opencode: opencodeConfigCheck(repoRoot, homeDir),
       platform: os.platform(),
       ...(dogfood ? { dogfood } : {})
     };

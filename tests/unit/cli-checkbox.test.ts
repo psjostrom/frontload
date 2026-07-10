@@ -7,6 +7,7 @@ describe("agent checkbox prompt", () => {
 
     expect(formatAgentCheckboxPrompt(state)).toContain("[x] Codex");
     expect(formatAgentCheckboxPrompt(state)).toContain("[ ] Claude Code");
+    expect(formatAgentCheckboxPrompt(state)).toContain("[ ] opencode");
     expect(selectedAgents(state)).toEqual(["codex"]);
   });
 
@@ -16,8 +17,8 @@ describe("agent checkbox prompt", () => {
     state = applyAgentCheckboxKey(state, " ");
     state = applyAgentCheckboxKey(state, "down");
 
-    expect(state.focusedIndex).toBe(1);
-    expect(selectedAgents(state)).toEqual(["codex"]);
+    expect(state.focusedIndex).toBe(2);
+    expect(selectedAgents(state)).toEqual(["codex", "opencode"]);
   });
 
   it("supports selecting all and none from the checkbox flow", () => {
@@ -27,6 +28,6 @@ describe("agent checkbox prompt", () => {
     expect(selectedAgents(state)).toEqual([]);
 
     state = applyAgentCheckboxKey(state, "a");
-    expect(selectedAgents(state)).toEqual(["codex", "claude"]);
+    expect(selectedAgents(state)).toEqual(["codex", "claude", "opencode"]);
   });
 });

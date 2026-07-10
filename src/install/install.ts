@@ -8,7 +8,7 @@ import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
 import { ensureStateDir } from "../utils/path.js";
 import { packageVersion } from "../version.js";
 
-export type AgentName = "codex" | "claude";
+export type AgentName = "codex" | "claude" | "opencode";
 export type ConfigScope = "project" | "global";
 export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 
@@ -165,6 +165,44 @@ function hasJsonMcpServer(file: string): boolean {
   if (!fs.existsSync(file)) return false;
   const config = readJson<Record<string, unknown>>(file, {});
   return typeof config.mcpServers === "object" && config.mcpServers !== null && !Array.isArray(config.mcpServers) && "frontload" in config.mcpServers;
+}
+
+function opencodeMcpServer(entry: McpEntry): Record<string, unknown> {
+  return {
+    type: "local",
+    command: [entry.command, ...entry.args],
+    enabled: true,
+    timeout: 20000
+  };
+}
+
+function upsertOpencodeMcpServer(file: string, entry: McpEntry, force: boolean): WriteResult {
+  const existed = fs.existsSync(file);
+  const config = readJson<Record<string, unknown>>(file, {});
+  const mcp = isJsonObject(config.mcp) ? config.mcp as Record<string, unknown> : {};
+  const next = opencodeMcpServer(entry);
+  if (!force && sameJson(mcp.frontload, next)) return { path: file, action: "skipped" };
+  mcp.frontload = next;
+  config.mcp = mcp;
+  writeJson(file, config);
+  return { path: file, action: existed ? "updated" : "created" };
+}
+
+function removeOpencodeMcpServer(file: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  const config = readJson<Record<string, unknown>>(file, {});
+  if (typeof config.mcp !== "object" || config.mcp === null || Array.isArray(config.mcp)) return false;
+  const mcp = config.mcp as Record<string, unknown>;
+  if (!("frontload" in mcp)) return false;
+  delete mcp.frontload;
+  writeJson(file, config);
+  return true;
+}
+
+function hasOpencodeMcpServer(file: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  const config = readJson<Record<string, unknown>>(file, {});
+  return typeof config.mcp === "object" && config.mcp !== null && !Array.isArray(config.mcp) && "frontload" in config.mcp;
 }
 
 function tomlString(value: string): string {
@@ -389,6 +427,15 @@ export const mcpConfigAdapters: Record<AgentName, McpConfigAdapter> = {
     write: upsertJsonMcpServer,
     remove: removeJsonMcpServer,
     hasFrontloadEntry: hasJsonMcpServer
+  },
+  opencode: {
+    name: "opencode",
+    detect: (homeDir) => fs.existsSync(path.join(homeDir, ".config/opencode")),
+    projectPath: (repoRoot) => path.join(repoRoot, "opencode.json"),
+    globalPath: (homeDir) => path.join(homeDir, ".config/opencode/opencode.json"),
+    write: upsertOpencodeMcpServer,
+    remove: removeOpencodeMcpServer,
+    hasFrontloadEntry: hasOpencodeMcpServer
   }
 };
 
@@ -396,7 +443,9 @@ function copyFrontloadSkill(agent: AgentName, homeDir: string, force: boolean, w
   const root = packageRoot();
   const target = agent === "codex"
     ? path.join(homeDir, ".codex/skills/frontload")
-    : path.join(homeDir, ".claude/skills/frontload");
+    : agent === "claude"
+      ? path.join(homeDir, ".claude/skills/frontload")
+      : path.join(homeDir, ".config/opencode/skills/frontload");
   copyDir(path.join(root, `plugins/${agent}/skills/frontload`), target, force, writes);
 }
 
@@ -624,10 +673,39 @@ function configureClaudeAt(repoRoot: string, homeDir: string, scope: ConfigScope
   };
 }
 
+function opencodeNotes(scope: ConfigScope): string[] {
+  const configNote = scope === "project"
+    ? "opencode MCP config was written to project opencode.json; the Frontload skill was copied to your opencode config."
+    : "opencode MCP config was written to global ~/.config/opencode/opencode.json; the Frontload skill was copied to your opencode config.";
+  return [
+    configNote,
+    "Restart opencode after init completes; the frontload MCP server should be available for this repo."
+  ];
+}
+
+function configureOpencode(repoRoot: string, homeDir = os.homedir(), force = false, scope: ConfigScope = "project"): InstallResult {
+  const configPath = scope === "global" ? mcpConfigAdapters.opencode.globalPath(homeDir) : mcpConfigAdapters.opencode.projectPath(repoRoot);
+  if (!configPath) throw new Error(`opencode does not support ${scope} MCP config from init.`);
+  return configureOpencodeAt(repoRoot, homeDir, scope, configPath, buildMcpEntry(repoRoot), force);
+}
+
+function configureOpencodeAt(repoRoot: string, homeDir: string, scope: ConfigScope, configPath: string, entry: McpEntry, force: boolean): InstallResult {
+  const writes = [
+    mcpConfigAdapters.opencode.write(configPath, entry, force)
+  ];
+  copyFrontloadSkill("opencode", homeDir, force, writes);
+  return {
+    agent: "opencode",
+    writes,
+    notes: opencodeNotes(scope)
+  };
+}
+
 function configureAgent(agent: AgentName | "all", repoRoot: string, homeDir = os.homedir(), force = false, scope: ConfigScope = "project"): InstallResult[] {
-  if (agent === "all") return [configureCodex(repoRoot, homeDir, force), configureClaude(repoRoot, homeDir, force, scope)];
+  if (agent === "all") return [configureCodex(repoRoot, homeDir, force), configureClaude(repoRoot, homeDir, force, scope), configureOpencode(repoRoot, homeDir, force, scope)];
   if (agent === "codex") return [configureCodex(repoRoot, homeDir, force)];
   if (agent === "claude") return [configureClaude(repoRoot, homeDir, force, scope)];
+  if (agent === "opencode") return [configureOpencode(repoRoot, homeDir, force, scope)];
   throw new Error(`Unknown agent: ${agent}`);
 }
 
@@ -635,7 +713,7 @@ export function parseAgents(value: string | undefined): Array<AgentName | "all">
   if (!value || value === "none") return [];
   const values = value.split(",").map((part) => part.trim()).filter(Boolean);
   for (const agent of values) {
-    if (!["codex", "claude", "all"].includes(agent)) throw new Error(`Unknown agent: ${agent}`);
+    if (!["codex", "claude", "opencode", "all"].includes(agent)) throw new Error(`Unknown agent: ${agent}`);
   }
   if (values.includes("all")) return ["all"];
   return [...new Set(values)] as Array<AgentName | "all">;
@@ -707,6 +785,13 @@ function existingClaudeRepoArg(configPath: string): string | undefined {
   return repoArgFromArgs(frontload.args);
 }
 
+function existingOpencodeRepoArg(configPath: string): string | undefined {
+  const config = readJson<Record<string, unknown>>(configPath, {});
+  const mcp = isJsonObject(config.mcp) ? config.mcp : {};
+  const frontload = isJsonObject(mcp.frontload) ? mcp.frontload : {};
+  return repoArgFromArgs(frontload.command);
+}
+
 function shouldRepinAbsoluteRepo(repo: string): boolean {
   let entries: string[];
   try {
@@ -721,7 +806,9 @@ function shouldRepinAbsoluteRepo(repo: string): boolean {
 }
 
 function upgradeMcpEntry(agent: AgentName, configPath: string, repoRoot: string): McpEntry {
-  const repo = agent === "codex" ? existingCodexRepoArg(configPath) : existingClaudeRepoArg(configPath);
+  const repo = agent === "codex" ? existingCodexRepoArg(configPath)
+    : agent === "claude" ? existingClaudeRepoArg(configPath)
+    : existingOpencodeRepoArg(configPath);
   const pinnedRepo = !repo || repo === "." || (path.isAbsolute(repo) && shouldRepinAbsoluteRepo(repo))
     ? repoRoot
     : path.isAbsolute(repo)
@@ -738,6 +825,7 @@ function hasFrontloadHookForEvent(file: string, event: HookDefinition["event"]):
 }
 
 function upgradeHookDefinitions(agent: AgentName, hooksFile: string): HookDefinition[] {
+  if (agent === "opencode") return [];
   return hookDefinitions[agent].filter((definition) => hasFrontloadHookForEvent(hooksFile, definition.event));
 }
 
@@ -794,6 +882,28 @@ export function upgradeAll(repoRoot: string, homeDir = os.homedir()): InitResult
       claudeGlobalConfig,
       upgradeMcpEntry("claude", claudeGlobalConfig, absRepo),
       upgradeHookDefinitions("claude", claudeSettingsPath(absRepo, homeDir, "global")),
+      true
+    )));
+  }
+  const opencodeProjectConfig = mcpConfigAdapters.opencode.projectPath(absRepo);
+  if (hasConfiguredFrontload(mcpConfigAdapters.opencode, opencodeProjectConfig)) {
+    agents.push(upgradeNotes(configureOpencodeAt(
+      absRepo,
+      homeDir,
+      "project",
+      opencodeProjectConfig,
+      upgradeMcpEntry("opencode", opencodeProjectConfig, absRepo),
+      true
+    )));
+  }
+  const opencodeGlobalConfig = mcpConfigAdapters.opencode.globalPath(homeDir);
+  if (hasConfiguredFrontload(mcpConfigAdapters.opencode, opencodeGlobalConfig)) {
+    agents.push(upgradeNotes(configureOpencodeAt(
+      absRepo,
+      homeDir,
+      "global",
+      opencodeGlobalConfig,
+      upgradeMcpEntry("opencode", opencodeGlobalConfig, absRepo),
       true
     )));
   }

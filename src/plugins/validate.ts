@@ -68,7 +68,7 @@ type HooksConfig = z.infer<typeof hooksConfigSchema>;
 export type PluginValidationResult = {
   summary: string;
   root: string;
-  host: "codex" | "claude";
+  host: "codex" | "claude" | "opencode";
   checked: string[];
   warnings: string[];
 };
@@ -106,25 +106,30 @@ function assertFrontloadHook(config: HooksConfig, host: HookHost, file: string):
   }
 }
 
-export function validatePlugin(root: string, host: "codex" | "claude"): PluginValidationResult {
+export function validatePlugin(root: string, host: "codex" | "claude" | "opencode"): PluginValidationResult {
   const absRoot = path.resolve(root);
   const checked: string[] = [];
   const warnings: string[] = [];
-  const manifestFile = path.join(absRoot, host === "codex" ? ".codex-plugin/plugin.json" : ".claude-plugin/plugin.json");
+  const manifestFile = host === "codex"
+    ? path.join(absRoot, ".codex-plugin/plugin.json")
+    : host === "claude"
+      ? path.join(absRoot, ".claude-plugin/plugin.json")
+      : "";
   const hooksFile = path.join(absRoot, "hooks/hooks.json");
   const skillFile = path.join(absRoot, "skills/frontload/SKILL.md");
 
-  assertFile(manifestFile, `${host} plugin manifest`, checked);
-  assertFile(skillFile, "Frontload skill", checked);
-
-  const manifest = readJson(manifestFile);
-  if (host === "codex") codexPluginSchema.parse(manifest);
-  else claudePluginSchema.parse(manifest);
+  if (manifestFile) {
+    assertFile(manifestFile, `${host} plugin manifest`, checked);
+    const manifest = readJson(manifestFile);
+    if (host === "codex") codexPluginSchema.parse(manifest);
+    else claudePluginSchema.parse(manifest);
+  }
 
   if (fs.existsSync(hooksFile)) {
     assertFile(hooksFile, "hooks config", checked);
-    assertFrontloadHook(hooksConfigSchema.parse(readJson(hooksFile)), host, hooksFile);
+    assertFrontloadHook(hooksConfigSchema.parse(readJson(hooksFile)), host as HookHost, hooksFile);
   }
+  assertFile(skillFile, "Frontload skill", checked);
   assertSkill(skillFile);
 
   return {
@@ -139,6 +144,7 @@ export function validatePlugin(root: string, host: "codex" | "claude"): PluginVa
 export function validateBundledPlugins(repoRoot = process.cwd()): PluginValidationResult[] {
   return [
     validatePlugin(path.join(repoRoot, "plugins/codex"), "codex"),
-    validatePlugin(path.join(repoRoot, "plugins/claude"), "claude")
+    validatePlugin(path.join(repoRoot, "plugins/claude"), "claude"),
+    validatePlugin(path.join(repoRoot, "plugins/opencode"), "opencode")
   ];
 }

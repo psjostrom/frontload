@@ -72,7 +72,7 @@ full log is truly needed.
   reports
 - `src/gate/` and `hooks/` - hook entrypoints and host command gating
 - `src/mcp/` - MCP server and tool wiring
-- `plugins/codex/`, `plugins/claude/` - bundled plugin adapters
+- `plugins/codex/`, `plugins/claude/`, `plugins/opencode/` - bundled plugin adapters
 - `skills/frontload/` - shared Frontload skill source
 - `tests/unit/`, `tests/e2e/` - Vitest test suites
 - `fixtures/react-ts-app/` - fixture repo used by e2e and proof commands

@@ -43,7 +43,7 @@ export function selectedConfigScope(state: ConfigScopeRadioState): ConfigScope {
 
 export function formatConfigScopeRadioPrompt(state: ConfigScopeRadioState): string {
   return [
-    "Choose Claude Code MCP config scope.",
+    "Choose Claude Code and opencode MCP config scope.",
     "Use Up/Down to move, Enter to continue.",
     "",
     ...state.choices.map((choice, index) => {
