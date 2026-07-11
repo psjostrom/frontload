@@ -249,6 +249,51 @@ describe("e2e proof workflow", () => {
     expect(JSON.parse(post.stdout)).toMatchObject({ decision: "block" });
   });
 
+  it("runs a rewritten command in its linked worktree when the hook payload omits workdir", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-worktree-"));
+    const repo = path.join(parent, "repo");
+    const worktree = path.join(parent, "worktree");
+    fs.mkdirSync(repo);
+    fs.writeFileSync(path.join(repo, "package.json"), `${JSON.stringify({
+      private: true,
+      scripts: {
+        test: "node -e \"require('node:fs').writeFileSync('executed-from.txt', process.cwd())\""
+      }
+    }, null, 2)}\n`);
+    await execa("git", ["init"], { cwd: repo });
+    await execa("git", ["config", "user.email", "frontload@example.invalid"], { cwd: repo });
+    await execa("git", ["config", "user.name", "Frontload Tests"], { cwd: repo });
+    await execa("git", ["add", "package.json"], { cwd: repo });
+    await execa("git", ["commit", "-m", "test fixture"], { cwd: repo });
+    await execa("git", ["worktree", "add", "-b", "linked-test", worktree], { cwd: repo });
+    fs.mkdirSync(path.join(repo, ".frontload"));
+
+    try {
+      const cli = path.resolve("dist/src/cli/index.js");
+      const hook = await execa(
+        process.execPath,
+        [cli, "hook", "pre-tool-use", "--host", "codex"],
+        {
+          input: JSON.stringify({
+            cwd: repo,
+            tool_name: "Bash",
+            tool_input: { command: "npm test" }
+          })
+        }
+      );
+      const command = JSON.parse(hook.stdout).hookSpecificOutput.updatedInput.command as string;
+
+      await execa("sh", ["-c", command], { cwd: worktree });
+
+      expect(fs.realpathSync(fs.readFileSync(path.join(worktree, "executed-from.txt"), "utf8"))).toBe(fs.realpathSync(worktree));
+      expect(fs.existsSync(path.join(repo, "executed-from.txt"))).toBe(false);
+      expect(fs.readdirSync(path.join(worktree, ".frontload/logs"))).toHaveLength(1);
+      expect(fs.existsSync(path.join(repo, ".frontload/logs"))).toBe(false);
+    } finally {
+      await execa("git", ["worktree", "remove", "--force", worktree], { cwd: repo, reject: false });
+    }
+  });
+
   it("rejects missing and invalid hook hosts at the CLI boundary", async () => {
     const cli = path.resolve("dist/src/cli/index.js");
     const missing = await execa(process.execPath, [cli, "hook", "pre-tool-use"], { reject: false });
