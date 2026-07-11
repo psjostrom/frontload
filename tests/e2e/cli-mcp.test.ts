@@ -29,23 +29,35 @@ function writeShellScript(file: string, content: string): void {
   fs.chmodSync(file, 0o755);
 }
 
-async function execaWithPty(command: string, args: string[], input: string, env: NodeJS.ProcessEnv): Promise<void> {
-  const runner = String.raw`
-import base64, os, pty, select, signal, sys, time
+type PtyStep = { prompt: string; bytes: string; settleMs?: number };
 
-input_bytes = base64.b64decode(sys.argv[1])
-prompt = sys.argv[2].encode()
-cmd = sys.argv[3:]
+async function execaWithPty(command: string, args: string[], steps: PtyStep[], env: NodeJS.ProcessEnv): Promise<void> {
+  if (steps.length === 0) throw new Error("execaWithPty requires at least one step");
+  const runner = String.raw`
+import base64, json, os, pty, select, signal, sys, time
+
+steps = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
+for step in steps:
+    step["_trigger"] = step["prompt"].encode()
+    step["_bytes"] = base64.b64decode(step["bytes"])
+cmd = sys.argv[2:]
 pid, fd = pty.fork()
 if pid == 0:
     os.execvpe(cmd[0], cmd, os.environ)
 
-sent = False
 buffer = b""
-deadline = time.time() + 10
+idx = 0
+sent_at = None
+deadline = time.time() + 12
 status = 1
 while True:
     ready, _, _ = select.select([fd], [], [], 0.05)
+    if sent_at is not None and idx < len(steps):
+        settle = steps[idx].get("settleMs", 0) / 1000.0
+        if time.time() - sent_at >= settle:
+            os.write(fd, steps[idx]["_bytes"])
+            idx += 1
+            sent_at = None
     if ready:
         try:
             chunk = os.read(fd, 4096)
@@ -55,9 +67,12 @@ while True:
             buffer += chunk
             sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
-    if not sent and prompt in buffer:
-        os.write(fd, input_bytes)
-        sent = True
+    if sent_at is None and idx < len(steps) and steps[idx]["_trigger"] in buffer:
+        if steps[idx].get("settleMs", 0) <= 0:
+            os.write(fd, steps[idx]["_bytes"])
+            idx += 1
+        else:
+            sent_at = time.time()
     finished, status = os.waitpid(pid, os.WNOHANG)
     if finished:
         break
@@ -75,11 +90,14 @@ sys.exit(1)
   await execa("python3", [
     "-c",
     runner,
-    Buffer.from(input, "utf8").toString("base64"),
-    "Choose Claude Code and opencode MCP config scope.",
+    Buffer.from(JSON.stringify(steps.map((step) => ({
+      prompt: step.prompt,
+      bytes: Buffer.from(step.bytes, "utf8").toString("base64"),
+      settleMs: step.settleMs ?? 0
+    }))), "utf8").toString("base64"),
     command,
     ...args
-  ], { env, timeout: 15000 });
+  ], { env, timeout: 20000 });
 }
 
 async function waitForProcessExit(pid: number, timeoutMs = 2000): Promise<boolean> {
@@ -819,12 +837,69 @@ describe("e2e proof workflow", () => {
       "claude",
       "--home",
       home
-    ], "\x1b[B\r", { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` });
+    ], [{ prompt: "Choose Claude Code and opencode MCP config scope.", bytes: "\x1b[B\r" }], { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` });
 
     expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".claude/settings.json"))).toBe(true);
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(false);
+  });
+
+  ttyIt("runs init interactively through the agent checkbox and scope radio prompts in sequence", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-checkbox-scope-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-bin-"));
+    writeShellScript(path.join(bin, "frontload"), "#!/bin/sh\nexit 0\n");
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    await execaWithPty(process.execPath, [
+      cli,
+      "init",
+      "--repo",
+      repo,
+      "--home",
+      home
+    ], [
+      { prompt: "Which agents should Frontload configure?", bytes: "\r" },
+      { prompt: "Choose Claude Code and opencode MCP config scope.", bytes: "\r", settleMs: 100 }
+    ], { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` });
+
+    expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, "opencode.json"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
+  });
+
+  ttyIt("reports a friendly cancellation when an interactive prompt is cancelled before init completes", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-cancel-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-cancel-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-cancel-bin-"));
+    writeShellScript(path.join(bin, "frontload"), "#!/bin/sh\nexit 0\n");
+    const cli = path.resolve("dist/src/cli/index.js");
+    let exitError: Error | undefined;
+
+    try {
+      await execaWithPty(process.execPath, [
+        cli,
+        "init",
+        "--repo",
+        repo,
+        "--home",
+        home
+      ], [
+        { prompt: "Which agents should Frontload configure?", bytes: "\x03" }
+      ], { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` });
+    } catch (error) {
+      exitError = error as Error;
+    }
+
+    expect(exitError).toBeDefined();
+    expect(() => {
+      void exitError;
+      void exitError?.message;
+    }).not.toThrow();
+    expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
   });
 
   it("keeps the original MCP error when event persistence also fails", async () => {
