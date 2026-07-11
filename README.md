@@ -325,6 +325,10 @@ serves:
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
 - `opencode`: writes `mcp.frontload` into project `opencode.json` (or existing `opencode.jsonc`) by default, or `~/.config/opencode/opencode.json` with `--scope global`, copies the Frontload skill to `~/.config/opencode/skills/frontload`, and writes a gate plugin wrapper to `~/.config/opencode/plugins/frontload-gate.js`.
 
+Gate-rewritten run, search, and read commands resolve the Git worktree when the
+command executes, so linked worktrees keep their state and command logs separate
+even when a host hook does not provide the command working directory.
+
 If `frontload` is not already installed globally, `init` prompts before running
 `npm install -g frontload`. Use `--yes` to approve the global install prompt in
 automation. Restart the editor after init completes; MCP clients load server

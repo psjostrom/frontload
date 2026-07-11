@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { appendEvent, outputSize } from "../budget/events.js";
 import { loadConfig, type FrontloadConfig } from "../config/config.js";
@@ -49,17 +50,61 @@ export function initializedRoot(start: string): string | null {
   }
 }
 
+function canonicalPath(value: string): string {
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+function gitBoundary(start: string): string | null {
+  let current = path.resolve(start);
+  while (true) {
+    if (fs.existsSync(path.join(current, ".git"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+export function runtimeRepoFromCwd(start = process.cwd()): string {
+  const cwd = canonicalPath(path.resolve(start));
+  const initialized = initializedRoot(cwd);
+  const boundary = gitBoundary(cwd);
+  try {
+    const root = canonicalPath(execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim());
+    if (initialized && isWithin(root, initialized)) return initialized;
+    return root;
+  } catch {
+    // Non-Git initialized directories still use their nearest Frontload root.
+  }
+  if (boundary) {
+    if (initialized && isWithin(boundary, initialized)) return initialized;
+    return boundary;
+  }
+  return initialized ?? cwd;
+}
+
 export function distRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 }
 
-export function gateOptionsForRoot(root: string): GateOptions {
+export function gateOptionsForRuntimeRepo(): GateOptions {
   const cli = path.join(distRoot(), "src/cli/index.js");
   const frontloadCommand = `${shellQuote(process.execPath)} ${shellQuote(cli)}`;
   return {
-    runnerCommand: `${frontloadCommand} run --repo ${shellQuote(root)}`,
-    searchCommand: `${frontloadCommand} search --repo ${shellQuote(root)}`,
-    readCommand: `${frontloadCommand} read --repo ${shellQuote(root)}`
+    runnerCommand: `${frontloadCommand} run --repo-from-cwd`,
+    searchCommand: `${frontloadCommand} search --repo-from-cwd`,
+    readCommand: `${frontloadCommand} read --repo-from-cwd`
   };
 }
 
@@ -75,7 +120,7 @@ export function initializedGateContext(startingDirectories: string[]): GateRunti
   return {
     root,
     config,
-    gateOptions: gateOptionsForRoot(root)
+    gateOptions: gateOptionsForRuntimeRepo()
   };
 }
 
