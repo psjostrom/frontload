@@ -819,6 +819,37 @@ describe("e2e proof workflow", () => {
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
   });
 
+  it("reports invalid init options instead of treating them as prompt cancellation", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-invalid-"));
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    const invalidAgents = await execa(process.execPath, [
+      cli,
+      "init",
+      "--repo",
+      repo,
+      "--agents",
+      "cursor"
+    ], { reject: false });
+    const invalidScope = await execa(process.execPath, [
+      cli,
+      "init",
+      "--repo",
+      repo,
+      "--agents",
+      "claude",
+      "--scope",
+      "workspace"
+    ], { reject: false });
+
+    expect(invalidAgents.exitCode).toBe(1);
+    expect(invalidAgents.stderr).toContain("Unknown agent: cursor");
+    expect(invalidAgents.stdout).not.toContain("Frontload init was cancelled");
+    expect(invalidScope.exitCode).toBe(1);
+    expect(invalidScope.stderr).toContain("Unknown config scope: workspace");
+    expect(invalidScope.stdout).not.toContain("Frontload init was cancelled");
+  });
+
   const ttyIt = process.platform === "win32" ? it.skip : it;
 
   ttyIt("uses the interactive Claude scope radio selection when initializing global config", async () => {
@@ -870,13 +901,37 @@ describe("e2e proof workflow", () => {
     expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
   });
 
+  ttyIt("does not treat the terminal End key as prompt cancellation", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-end-key-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-bin-"));
+    writeShellScript(path.join(bin, "frontload"), "#!/bin/sh\nexit 0\n");
+    const cli = path.resolve("dist/src/cli/index.js");
+
+    await execaWithPty(process.execPath, [
+      cli,
+      "init",
+      "--repo",
+      repo,
+      "--home",
+      home
+    ], [
+      { prompt: "Which agents should Frontload configure?", bytes: "\x1b[F\r" },
+      { prompt: "Choose Claude Code and opencode MCP config scope.", bytes: "\r", settleMs: 100 }
+    ], { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` });
+
+    expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, "opencode.json"))).toBe(true);
+  });
+
   ttyIt("reports a friendly cancellation when an interactive prompt is cancelled before init completes", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-cancel-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-cancel-home-"));
     const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-cancel-bin-"));
     writeShellScript(path.join(bin, "frontload"), "#!/bin/sh\nexit 0\n");
     const cli = path.resolve("dist/src/cli/index.js");
-    let exitError: Error | undefined;
+    let exitError: { exitCode?: number; stdout?: string; stderr?: string } | undefined;
 
     try {
       await execaWithPty(process.execPath, [
@@ -890,14 +945,13 @@ describe("e2e proof workflow", () => {
         { prompt: "Which agents should Frontload configure?", bytes: "\x03" }
       ], { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` });
     } catch (error) {
-      exitError = error as Error;
+      exitError = error as { exitCode?: number; stdout?: string; stderr?: string };
     }
 
     expect(exitError).toBeDefined();
-    expect(() => {
-      void exitError;
-      void exitError?.message;
-    }).not.toThrow();
+    expect(exitError?.exitCode).toBe(1);
+    expect(exitError?.stdout).toContain("Frontload init was cancelled. No files were changed.");
+    expect(exitError?.stderr ?? "").not.toContain("Prompt cancelled");
     expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
   });

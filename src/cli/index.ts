@@ -155,7 +155,7 @@ async function promptAgentCheckboxes(initialState: AgentCheckboxState): Promise<
     let cleanup: () => void;
 
     const onKeypress: PromptKeypressHandler = (_text, key) => {
-      if (key.ctrl && key.name === "c" || key.name === "end" || key.name === "close") {
+      if (key.ctrl && key.name === "c") {
         cleanup();
         reject(new Error("Prompt cancelled"));
         return;
@@ -194,7 +194,7 @@ async function promptConfigScopeRadio(initialState: ConfigScopeRadioState): Prom
     let cleanup: () => void;
 
     const onKeypress: PromptKeypressHandler = (_text, key) => {
-      if (key.ctrl && key.name === "c" || key.name === "end" || key.name === "close") {
+      if (key.ctrl && key.name === "c") {
         cleanup();
         reject(new Error("Prompt cancelled"));
         return;
@@ -741,20 +741,28 @@ program
   .action(async (opts) => {
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     let agents: ReturnType<typeof parseAgents>;
-    try {
-      agents = opts.agents === undefined ? await promptAgents(homeDir) : parseAgents(opts.agents);
-    } catch {
-      process.stdout.write("Frontload init was cancelled. No files were changed.\n");
-      process.exitCode = 1;
-      return;
+    if (opts.agents === undefined) {
+      try {
+        agents = await promptAgents(homeDir);
+      } catch {
+        process.stdout.write("Frontload init was cancelled. No files were changed.\n");
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      agents = parseAgents(opts.agents);
     }
     let scope: ConfigScope;
-    try {
-      scope = opts.scope === undefined && (configuresAgent(agents, "claude") || configuresAgent(agents, "opencode")) ? await promptConfigScope() : parseConfigScope(opts.scope);
-    } catch {
-      process.stdout.write("Frontload init was cancelled. No files were changed.\n");
-      process.exitCode = 1;
-      return;
+    if (opts.scope === undefined && (configuresAgent(agents, "claude") || configuresAgent(agents, "opencode"))) {
+      try {
+        scope = await promptConfigScope();
+      } catch {
+        process.stdout.write("Frontload init was cancelled. No files were changed.\n");
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      scope = parseConfigScope(opts.scope);
     }
     const globalInstall = agents.length > 0 ? await ensureGlobalFrontload(!!opts.yes) : undefined;
     if (globalInstall?.action === "manual") {
