@@ -10,5 +10,3 @@
   }
 }
 ```
-
-v0.1 does not require Ollama, a paid LLM API, or any external model.
