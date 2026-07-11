@@ -107,24 +107,54 @@ function renderConfigScopeRadioPrompt(output: NodeJS.WriteStream, state: ConfigS
   return prompt.split("\n").length;
 }
 
-async function promptAgentCheckboxes(initialState: AgentCheckboxState): Promise<AgentName[]> {
-  const input = process.stdin;
-  const output = process.stdout;
+type PromptKeypressHandler = (_text: string, key: { name?: string; ctrl?: boolean }) => void;
+
+function startPromptStdin(
+  input: NodeJS.ReadStream,
+  output: NodeJS.WriteStream,
+  onKeypress: PromptKeypressHandler
+): () => void {
   emitKeypressEvents(input);
   if (input.isTTY) input.setRawMode(true);
   output.write("\x1b[?25l");
 
+  // Treat stdin EOF/close as Ctrl-C: the prompt should reject, not silently fall
+  // back to a default and let init continue as if the user accepted.
+  const onStdinClose = (): void => {
+    onKeypress("", { name: "c", ctrl: true });
+    input.off("end", onStdinClose);
+    input.off("close", onStdinClose);
+  };
+
+  input.on("keypress", onKeypress);
+  input.on("end", onStdinClose);
+  input.on("close", onStdinClose);
+  // Previous prompts (or a prior call in the same process) leave stdin paused via
+  // pause(). Reattaching listeners does not reflow a paused Readable, so without
+  // resume() the next prompt would silently exit with code 0 when the event loop
+  // drains. Always resume after wiring up listeners.
+  if (input.isTTY) input.resume();
+
+  return () => {
+    input.off("keypress", onKeypress);
+    input.off("end", onStdinClose);
+    input.off("close", onStdinClose);
+    if (input.isTTY) input.setRawMode(false);
+    input.pause();
+    output.write("\x1b[?25h\n");
+  };
+}
+
+async function promptAgentCheckboxes(initialState: AgentCheckboxState): Promise<AgentName[]> {
+  const input = process.stdin;
+  const output = process.stdout;
+
   return new Promise((resolve, reject) => {
     let state = initialState;
-    let renderedLines = renderAgentCheckboxPrompt(output, state, 0);
+    let renderedLines = 0;
+    let cleanup: () => void;
 
-    const cleanup = (): void => {
-      input.off("keypress", onKeypress);
-      if (input.isTTY) input.setRawMode(false);
-      input.pause();
-      output.write("\x1b[?25h\n");
-    };
-    const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
+    const onKeypress: PromptKeypressHandler = (_text, key) => {
       if (key.ctrl && key.name === "c") {
         cleanup();
         reject(new Error("Prompt cancelled"));
@@ -143,7 +173,8 @@ async function promptAgentCheckboxes(initialState: AgentCheckboxState): Promise<
       }
     };
 
-    input.on("keypress", onKeypress);
+    cleanup = startPromptStdin(input, output, onKeypress);
+    renderedLines = renderAgentCheckboxPrompt(output, state, 0);
   });
 }
 
@@ -156,21 +187,13 @@ async function promptAgents(homeDir: string): Promise<ReturnType<typeof parseAge
 async function promptConfigScopeRadio(initialState: ConfigScopeRadioState): Promise<ConfigScope> {
   const input = process.stdin;
   const output = process.stdout;
-  emitKeypressEvents(input);
-  if (input.isTTY) input.setRawMode(true);
-  output.write("\x1b[?25l");
 
   return new Promise((resolve, reject) => {
     let state = initialState;
-    let renderedLines = renderConfigScopeRadioPrompt(output, state, 0);
+    let renderedLines = 0;
+    let cleanup: () => void;
 
-    const cleanup = (): void => {
-      input.off("keypress", onKeypress);
-      if (input.isTTY) input.setRawMode(false);
-      input.pause();
-      output.write("\x1b[?25h\n");
-    };
-    const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
+    const onKeypress: PromptKeypressHandler = (_text, key) => {
       if (key.ctrl && key.name === "c") {
         cleanup();
         reject(new Error("Prompt cancelled"));
@@ -189,7 +212,8 @@ async function promptConfigScopeRadio(initialState: ConfigScopeRadioState): Prom
       }
     };
 
-    input.on("keypress", onKeypress);
+    cleanup = startPromptStdin(input, output, onKeypress);
+    renderedLines = renderConfigScopeRadioPrompt(output, state, 0);
   });
 }
 
@@ -716,8 +740,30 @@ program
   .option("--yes", "approve installing frontload globally if needed")
   .action(async (opts) => {
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
-    const agents = opts.agents === undefined ? await promptAgents(homeDir) : parseAgents(opts.agents);
-    const scope = opts.scope === undefined && (configuresAgent(agents, "claude") || configuresAgent(agents, "opencode")) ? await promptConfigScope() : parseConfigScope(opts.scope);
+    let agents: ReturnType<typeof parseAgents>;
+    if (opts.agents === undefined) {
+      try {
+        agents = await promptAgents(homeDir);
+      } catch {
+        process.stdout.write("Frontload init was cancelled. No files were changed.\n");
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      agents = parseAgents(opts.agents);
+    }
+    let scope: ConfigScope;
+    if (opts.scope === undefined && (configuresAgent(agents, "claude") || configuresAgent(agents, "opencode"))) {
+      try {
+        scope = await promptConfigScope();
+      } catch {
+        process.stdout.write("Frontload init was cancelled. No files were changed.\n");
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      scope = parseConfigScope(opts.scope);
+    }
     const globalInstall = agents.length > 0 ? await ensureGlobalFrontload(!!opts.yes) : undefined;
     if (globalInstall?.action === "manual") {
       process.stdout.write(formatInitOutput({ summary: "Frontload was not installed globally; MCP config was not written.", globalInstall }));
