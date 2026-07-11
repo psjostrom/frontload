@@ -271,8 +271,10 @@ discovers the skill automatically from `~/.config/opencode/skills/`.
 
 Context savings come from the Frontload skill guiding the agent toward MCP
 tools, the budgeted responses those tools return, and the gate plugin that
-rewrites broad shell commands and compacts oversized tool output. Init copies
-the gate plugin to `~/.config/opencode/plugins/frontload-gate.js`.
+rewrites broad shell commands and compacts oversized tool output. Init writes
+the gate plugin wrapper to `~/.config/opencode/plugins/frontload-gate.js`;
+the wrapper delegates to Frontload's shared gate adapter and can rediscover the
+installed package from `PATH`.
 
 If your team shares `opencode.json` in git, either add it to `.gitignore` or use
 `--scope global`, since Frontload pins an absolute repo path in the MCP entry.
@@ -318,7 +320,7 @@ serves:
 
 - `codex`: writes a repo-specific `mcp_servers.frontload_<repo>_<hash>` entry into project `.codex/config.toml`, merges guarded Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
-- `opencode`: writes `mcp.frontload` into project `opencode.json` (or existing `opencode.jsonc`) by default, or `~/.config/opencode/opencode.json` with `--scope global`, copies the Frontload skill to `~/.config/opencode/skills/frontload`, and copies the gate plugin to `~/.config/opencode/plugins/frontload-gate.js`.
+- `opencode`: writes `mcp.frontload` into project `opencode.json` (or existing `opencode.jsonc`) by default, or `~/.config/opencode/opencode.json` with `--scope global`, copies the Frontload skill to `~/.config/opencode/skills/frontload`, and writes a gate plugin wrapper to `~/.config/opencode/plugins/frontload-gate.js`.
 
 If `frontload` is not already installed globally, `init` prompts before running
 `npm install -g frontload`. Use `--yes` to approve the global install prompt in

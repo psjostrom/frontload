@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
+import { opencodeGatePluginWrapper, preferredOpencodeGateAdapterUrl } from "../plugins/opencode-gate-wrapper.js";
 import { readJsonc, removeJsoncValue, writeJsoncValue } from "../utils/jsonc.js";
 import { ensureStateDir } from "../utils/path.js";
 import { packageVersion } from "../version.js";
@@ -99,6 +100,14 @@ function copyFile(source: string, target: string, force: boolean): WriteResult {
   if (existed && !force) return { path: target, action: "skipped" };
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
+  return { path: target, action: existed ? "updated" : "created" };
+}
+
+function writeTextFile(target: string, text: string, force: boolean): WriteResult {
+  const existed = fs.existsSync(target);
+  if (existed && !force) return { path: target, action: "skipped" };
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, text);
   return { path: target, action: existed ? "updated" : "created" };
 }
 
@@ -466,7 +475,7 @@ function copyFrontloadSkill(agent: AgentName, homeDir: string, force: boolean, w
 function copyFrontloadPlugin(homeDir: string, force: boolean, writes: WriteResult[]): void {
   const root = packageRoot();
   const target = path.join(homeDir, ".config/opencode/plugins/frontload-gate.js");
-  writes.push(copyFile(path.join(root, "plugins/opencode/plugins/frontload-gate.js"), target, force));
+  writes.push(writeTextFile(target, opencodeGatePluginWrapper(preferredOpencodeGateAdapterUrl(root)), force));
 }
 
 function executableNames(command: string): string[] {

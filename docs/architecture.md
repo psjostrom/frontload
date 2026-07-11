@@ -7,7 +7,10 @@ When you run `npx frontload init`, Frontload creates project state in
 `.frontload/` and can configure supported agents (Codex, Claude Code, opencode)
 to use its MCP server and command hooks. Codex and Claude Code use declarative
 PreToolUse/PostToolUse hooks; opencode uses a JS plugin gate
-(`frontload-gate.js`) installed to `~/.config/opencode/plugins/`.
+(`frontload-gate.js`) installed to `~/.config/opencode/plugins/`. These host
+entrypoints adapt native hook payloads into the shared gate runtime, so policy
+decisions, canonical config loading, command construction, output compaction,
+and budget event accounting live in one implementation.
 
 The workflow has four local parts:
 

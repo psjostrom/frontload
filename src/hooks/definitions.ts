@@ -1,3 +1,5 @@
+import { gateMatcherForHostPhase } from "../gate/capabilities.js";
+
 export type HookHost = "claude" | "codex";
 export type HookEvent = "PreToolUse" | "PostToolUse";
 
@@ -23,7 +25,7 @@ export const hookDefinitions: Record<HookHost, HookDefinition[]> = {
   claude: [
     {
       event: "PreToolUse",
-      matcher: "Read|Bash",
+      matcher: gateMatcherForHostPhase("claude", "pre"),
       hook: {
         type: "command",
         command: "frontload",
@@ -33,7 +35,7 @@ export const hookDefinitions: Record<HookHost, HookDefinition[]> = {
     },
     {
       event: "PostToolUse",
-      matcher: "Grep|Glob",
+      matcher: gateMatcherForHostPhase("claude", "post"),
       hook: {
         type: "command",
         command: "frontload",
@@ -45,7 +47,7 @@ export const hookDefinitions: Record<HookHost, HookDefinition[]> = {
   codex: [
     {
       event: "PreToolUse",
-      matcher: "^Bash$",
+      matcher: gateMatcherForHostPhase("codex", "pre"),
       hook: {
         type: "command",
         command: codexHookCommand("pre-tool-use"),
@@ -55,7 +57,7 @@ export const hookDefinitions: Record<HookHost, HookDefinition[]> = {
     },
     {
       event: "PostToolUse",
-      matcher: "^Bash$",
+      matcher: gateMatcherForHostPhase("codex", "post"),
       hook: {
         type: "command",
         command: codexHookCommand("post-tool-use"),

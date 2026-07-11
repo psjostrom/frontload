@@ -21,7 +21,8 @@ Init writes the Frontload MCP server entry to project `opencode.json` by
 default, or to `~/.config/opencode/opencode.json` with `--scope global`. If
 `opencode.jsonc` already exists, init writes to that instead and preserves
 comments. It also copies the Frontload skill to
-`~/.config/opencode/skills/frontload`.
+`~/.config/opencode/skills/frontload` and writes the gate plugin wrapper to
+`~/.config/opencode/plugins/frontload-gate.js`.
 
 Restart opencode after init so it loads the MCP server and skill.
 
@@ -53,7 +54,11 @@ Init also installs a gate plugin (`frontload-gate.js`) to
 opencode's `tool.execute.before` and `tool.execute.after` plugin hooks,
 applying the same budget policy as the Codex and Claude Code hooks: broad
 shell commands are rewritten through Frontload summaries, noisy output is
-compacted to the configured budget cap.
+compacted to the configured budget cap. The installed plugin is a thin wrapper
+around Frontload's shared OpenCode gate adapter and can rediscover the installed
+package from `PATH`, so config loading, policy decisions, command construction,
+output compaction, and budget accounting stay shared with the other supported
+consumers.
 
 ## Config Scope
 
@@ -67,11 +72,11 @@ and global config, so a global entry still applies when you open the repo.
 ## Local Plugin Development
 
 Most users do not need this section. To test this checked-in plugin package
-from a Frontload source checkout, build the project first and then copy the
-skill manually:
+from a Frontload source checkout, build the project first and run init so the
+OpenCode wrapper points at the checkout's compiled adapter:
 
 ```bash
 pnpm install
 pnpm build
-cp -r plugins/opencode/skills/frontload ~/.config/opencode/skills/frontload
+node dist/src/cli/index.js init --agents opencode --force
 ```
