@@ -1,24 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { hookDefinitions } from "../../src/hooks/definitions.js";
-import {
-  buildMcpEntry,
-  detectPackageManager,
-  globalInstallCommand,
-  initAll,
-  initProject,
-  installGlobalFrontload,
-  isGloballyInstalled,
-  mcpConfigAdapters,
-  needsShellForWindowsShim,
-  parseAgents,
-  parseConfigScope,
-  upgradeAll,
-  upgradeGlobalFrontload,
-} from "../../src/install/install.js";
+import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, needsShellForWindowsShim, packageRoot, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
+import { opencodeGatePluginWrapper, preferredOpencodeGateAdapterUrl } from "../../src/plugins/opencode-gate-wrapper.js";
 import { stateExcludeStatus } from "../../src/utils/path.js";
 import { readJsonc } from "../../src/utils/jsonc.js";
 
@@ -28,6 +16,40 @@ function writeExecutable(dir: string, name = "frontload"): string {
   fs.writeFileSync(file, "#!/bin/sh\nexit 0\n");
   fs.chmodSync(file, 0o755);
   return file;
+}
+
+function expectedOpencodeAdapterUrl(): string {
+  return pathToFileURL(path.join(packageRoot(), "dist/src/gate/adapters/opencode.js")).href;
+}
+
+function expectGeneratedOpencodeGateWrapper(text: string): void {
+  expect(text).toContain("FrontloadGate");
+  expect(text).toContain(JSON.stringify(expectedOpencodeAdapterUrl()));
+  expect(text).not.toContain("src/gate/gate.js");
+  expect(text).not.toContain("npm root -g");
+  expect(text).not.toContain("function loadConfig");
+}
+
+function writeFakeFrontloadPackage(parent: string): { root: string; binDir: string; adapterUrl: string } {
+  const root = path.join(parent, "frontload-global");
+  const cli = path.join(root, "dist/src/cli/index.js");
+  const adapter = path.join(root, "dist/src/gate/adapters/opencode.js");
+  const binDir = path.join(parent, "bin");
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  fs.mkdirSync(path.dirname(adapter), { recursive: true });
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "frontload" }));
+  fs.writeFileSync(cli, "#!/usr/bin/env node\n");
+  fs.chmodSync(cli, 0o755);
+  fs.writeFileSync(adapter, `
+export const FrontloadGate = async () => ({
+  "tool.execute.before": async (_input, output) => {
+    output.args.command = "fake global adapter";
+  }
+});
+`);
+  fs.symlinkSync(cli, path.join(binDir, "frontload"));
+  return { root, binDir, adapterUrl: pathToFileURL(fs.realpathSync(adapter)).href };
 }
 
 describe("installer", () => {
@@ -261,7 +283,7 @@ describe("installer", () => {
     expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
-    expect(
+expect(
       fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md")),
     ).toBe(true);
     expect(
@@ -270,6 +292,11 @@ describe("installer", () => {
     expect(
       fs.existsSync(
         path.join(home, ".config/opencode/skills/frontload/SKILL.md"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(home, ".config/opencode/plugins/frontload-gate.js"),
       ),
     ).toBe(true);
     expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(true);
@@ -385,6 +412,7 @@ describe("installer", () => {
     ).toEqual([
       "opencode.json",
       path.relative(repo, path.join(home, ".config/opencode/skills/frontload")),
+      path.relative(repo, path.join(home, ".config/opencode/plugins/frontload-gate.js"))
     ]);
     expect(opencodeConfig.mcp.frontload).toEqual({
       type: "local",
@@ -408,8 +436,35 @@ describe("installer", () => {
         "utf8",
       ),
     );
+    expect(fs.existsSync(path.join(home, ".config/opencode/plugins/frontload-gate.js"))).toBe(true);
+    expectGeneratedOpencodeGateWrapper(fs.readFileSync(path.join(home, ".config/opencode/plugins/frontload-gate.js"), "utf8"));
     expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
+  });
+
+  it("prefers a durable global opencode adapter over an ephemeral init package root", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-opencode-wrapper-root-"));
+    const globalPackage = writeFakeFrontloadPackage(temp);
+    const ephemeralRoot = path.join(temp, "_npx/12345/node_modules/frontload");
+    fs.mkdirSync(path.join(ephemeralRoot, "dist/src/gate/adapters"), { recursive: true });
+    fs.writeFileSync(path.join(ephemeralRoot, "package.json"), JSON.stringify({ name: "frontload" }));
+    fs.writeFileSync(path.join(ephemeralRoot, "dist/src/gate/adapters/opencode.js"), "export const FrontloadGate = async () => ({});\n");
+
+    expect(preferredOpencodeGateAdapterUrl(ephemeralRoot, globalPackage.binDir)).toBe(globalPackage.adapterUrl);
+  });
+
+  it("generates an executable opencode gate wrapper from the shared template", async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-opencode-wrapper-exec-"));
+    const globalPackage = writeFakeFrontloadPackage(temp);
+    const pluginFile = path.join(temp, "frontload-gate.mjs");
+    fs.writeFileSync(pluginFile, opencodeGatePluginWrapper(globalPackage.adapterUrl));
+
+    const plugin = await import(`${pathToFileURL(pluginFile).href}?wrapper-exec`);
+    const hooks = await plugin.FrontloadGate({ directory: temp });
+    const output = { args: { command: "pnpm test" } };
+    await hooks["tool.execute.before"]({ tool: "bash" }, output);
+
+    expect(output.args.command).toBe("fake global adapter");
   });
 
   it("can configure opencode globally", () => {
@@ -433,9 +488,14 @@ describe("installer", () => {
       enabled: true,
       timeout: 20000,
     });
-    expect(
+expect(
       fs.existsSync(
         path.join(home, ".config/opencode/skills/frontload/SKILL.md"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(home, ".config/opencode/plugins/frontload-gate.js"),
       ),
     ).toBe(true);
     expect(fs.existsSync(path.join(repo, "opencode.json"))).toBe(false);
@@ -1402,6 +1462,9 @@ describe("installer", () => {
     );
     fs.mkdirSync(path.dirname(skillFile), { recursive: true });
     fs.writeFileSync(skillFile, "old skill\n");
+    const pluginFile = path.join(home, ".config/opencode/plugins/frontload-gate.js");
+    fs.mkdirSync(path.dirname(pluginFile), { recursive: true });
+    fs.writeFileSync(pluginFile, "old plugin\n");
 
     const result = upgradeAll(repo, home);
     const config = JSON.parse(
@@ -1423,6 +1486,7 @@ describe("installer", () => {
         "utf8",
       ),
     );
+    expectGeneratedOpencodeGateWrapper(fs.readFileSync(pluginFile, "utf8"));
   });
 
   it("upgrades existing opencode global configuration", () => {

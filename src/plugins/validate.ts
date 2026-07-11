@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { hookConfigFor, type HookHost } from "../hooks/definitions.js";
+import { isGeneratedOpencodeGateWrapper } from "./opencode-gate-wrapper.js";
 
 const authorSchema = z.object({
   name: z.string().min(1),
@@ -106,6 +107,13 @@ function assertFrontloadHook(config: HooksConfig, host: HookHost, file: string):
   }
 }
 
+function assertOpencodeGatePlugin(file: string): void {
+  const text = fs.readFileSync(file, "utf8");
+  if (!isGeneratedOpencodeGateWrapper(text)) {
+    throw new Error(`${file} must delegate to the shared OpenCode adapter`);
+  }
+}
+
 export function validatePlugin(root: string, host: "codex" | "claude" | "opencode"): PluginValidationResult {
   const absRoot = path.resolve(root);
   const checked: string[] = [];
@@ -128,6 +136,11 @@ export function validatePlugin(root: string, host: "codex" | "claude" | "opencod
   if (fs.existsSync(hooksFile)) {
     assertFile(hooksFile, "hooks config", checked);
     assertFrontloadHook(hooksConfigSchema.parse(readJson(hooksFile)), host as HookHost, hooksFile);
+  }
+  if (host === "opencode") {
+    const pluginFile = path.join(absRoot, "plugins/frontload-gate.js");
+    assertFile(pluginFile, "Frontload gate plugin", checked);
+    assertOpencodeGatePlugin(pluginFile);
   }
   assertFile(skillFile, "Frontload skill", checked);
   assertSkill(skillFile);

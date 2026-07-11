@@ -47,6 +47,23 @@ describe("hook entry adapters", () => {
     }
   });
 
+  it("routes Claude Read through capabilities while Codex stays inert for Read", async () => {
+    const repo = initializedRepo();
+    const payload = JSON.stringify({
+      cwd: repo,
+      tool_name: "Read",
+      tool_input: { file_path: "pnpm-lock.yaml" }
+    });
+
+    const claude = JSON.parse((await runPreToolUseHook("claude", payload))!);
+    expect(claude.hookSpecificOutput).toMatchObject({
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny"
+    });
+    expect(claude.hookSpecificOutput.permissionDecisionReason).toContain("lockfile");
+    expect(await runPreToolUseHook("codex", payload)).toBeNull();
+  });
+
   it("emits shape-preserving Claude PostToolUse output", async () => {
     const repo = initializedRepo();
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
