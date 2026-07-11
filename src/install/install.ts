@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { hookDefinitions, type HookDefinition } from "../hooks/definitions.js";
+import { opencodeGatePluginWrapper, preferredOpencodeGateAdapterUrl } from "../plugins/opencode-gate-wrapper.js";
 import { readJsonc, removeJsoncValue, writeJsoncValue } from "../utils/jsonc.js";
 import { ensureStateDir } from "../utils/path.js";
 import { packageVersion } from "../version.js";
@@ -99,6 +100,14 @@ function copyFile(source: string, target: string, force: boolean): WriteResult {
   if (existed && !force) return { path: target, action: "skipped" };
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
+  return { path: target, action: existed ? "updated" : "created" };
+}
+
+function writeTextFile(target: string, text: string, force: boolean): WriteResult {
+  const existed = fs.existsSync(target);
+  if (existed && !force) return { path: target, action: "skipped" };
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, text);
   return { path: target, action: existed ? "updated" : "created" };
 }
 
@@ -463,6 +472,12 @@ function copyFrontloadSkill(agent: AgentName, homeDir: string, force: boolean, w
   copyDir(path.join(root, `plugins/${agent}/skills/frontload`), target, force, writes);
 }
 
+function copyFrontloadPlugin(homeDir: string, force: boolean, writes: WriteResult[]): void {
+  const root = packageRoot();
+  const target = path.join(homeDir, ".config/opencode/plugins/frontload-gate.js");
+  writes.push(writeTextFile(target, opencodeGatePluginWrapper(preferredOpencodeGateAdapterUrl(root)), force));
+}
+
 function executableNames(command: string): string[] {
   if (process.platform !== "win32") return [command];
   const extensions = (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean);
@@ -689,11 +704,11 @@ function configureClaudeAt(repoRoot: string, homeDir: string, scope: ConfigScope
 
 function opencodeNotes(scope: ConfigScope): string[] {
   const configNote = scope === "project"
-    ? "opencode MCP config was written to project opencode.json; the Frontload skill was copied to your opencode config."
-    : "opencode MCP config was written to global ~/.config/opencode/opencode.json; the Frontload skill was copied to your opencode config.";
+    ? "opencode MCP config was written to project opencode.json; the Frontload skill and gate plugin were copied to your opencode config."
+    : "opencode MCP config was written to global ~/.config/opencode/opencode.json; the Frontload skill and gate plugin were copied to your opencode config.";
   return [
     configNote,
-    "Restart opencode after init completes; the frontload MCP server should be available for this repo."
+    "Restart opencode after init completes; the frontload MCP server and gate plugin should be available for this repo."
   ];
 }
 
@@ -708,6 +723,7 @@ function configureOpencodeAt(repoRoot: string, homeDir: string, scope: ConfigSco
     mcpConfigAdapters.opencode.write(configPath, entry, force)
   ];
   copyFrontloadSkill("opencode", homeDir, force, writes);
+  copyFrontloadPlugin(homeDir, force, writes);
   return {
     agent: "opencode",
     writes,
