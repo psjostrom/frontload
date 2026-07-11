@@ -22,9 +22,16 @@ describe("plugin packages", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("validates the opencode plugin package with the TypeScript validator", () => {
+    const result = validatePlugin(path.join(pluginRoot, "opencode"), "opencode");
+    expect(result.summary).toContain("passed");
+    expect(result.checked).toHaveLength(1);
+    expect(result.warnings).toEqual([]);
+  });
+
   it("validates every bundled plugin from the repository root", () => {
     const results = validateBundledPlugins(path.resolve("."));
-    expect(results.map((r) => r.host)).toEqual(["codex", "claude"]);
+    expect(results.map((r) => r.host)).toEqual(["codex", "claude", "opencode"]);
   });
 
   it("keeps bundled hook files equal to the canonical host definitions", () => {

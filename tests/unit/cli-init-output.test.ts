@@ -89,6 +89,32 @@ describe("init output formatting", () => {
     expect(output).toContain("Use your agents normally; the Frontload skills tell them to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.");
   });
 
+  it("includes next steps for all three agents when configured", () => {
+    const output = formatInitOutput({
+      agents: [
+        { agent: "codex", writes: [], notes: [] },
+        { agent: "claude", writes: [], notes: [] },
+        { agent: "opencode", writes: [], notes: [] }
+      ]
+    });
+
+    expect(output).toContain("Restart Codex, Claude Code and opencode.");
+    expect(output).toContain("Run /mcp in each editor");
+    expect(output).toContain("In Codex, open /hooks");
+    expect(output).toContain("Use your agents normally; the Frontload skills tell them");
+  });
+
+  it("includes agent-first next steps for opencode-only setup", () => {
+    const output = formatInitOutput({
+      agents: [{ agent: "opencode", writes: [], notes: [] }]
+    });
+
+    expect(output).toContain("Restart opencode.");
+    expect(output).toContain("Run `opencode mcp list` and confirm frontload is connected.");
+    expect(output).toContain("Use opencode normally; the Frontload skill tells the agent to use MCP dossiers, search, reads, command summaries, and diff summaries before broad raw exploration.");
+    expect(output).not.toContain("/hooks");
+  });
+
   it("includes agent-first next steps for Claude-only setup", () => {
     const output = formatInitOutput({
       agents: [{ agent: "claude", writes: [], notes: [] }]
@@ -176,6 +202,17 @@ describe("upgrade output formatting", () => {
     expect(output).toContain("| Claude setup |");
     expect(output).toContain("Restart Codex and Claude Code.");
     expect(output).toContain("Run /mcp in each editor");
+  });
+
+  it("renders next steps for opencode-only upgrade", () => {
+    const output = formatUpgradeOutput({
+      agents: [{ agent: "opencode", writes: [], notes: [] }]
+    });
+
+    expect(output).toContain("| Opencode setup |");
+    expect(output).toContain("Restart opencode.");
+    expect(output).toContain("Run `opencode mcp list` and confirm frontload is connected.");
+    expect(output).not.toContain("/hooks");
   });
 
   it("renders a friendly message when no existing agent configuration is found", () => {

@@ -4,8 +4,9 @@ Frontload is local-first. It does not upload source code or call an LLM API at
 runtime.
 
 When you run `npx frontload init`, Frontload creates project state in
-`.frontload/` and can configure supported agents to use its MCP server and
-hooks.
+`.frontload/` and can configure supported agents (Codex, Claude Code, opencode)
+to use its MCP server. Codex and Claude Code also install command hooks;
+opencode is MCP plus the Frontload skill in this phase (a hook gate is planned).
 
 The workflow has four local parts:
 

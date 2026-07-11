@@ -10,7 +10,12 @@ npx frontload init
 Restart your editor after init so the MCP client loads the new server config.
 Then use your agent normally. The installed Frontload skill tells the agent to
 start broad repo work with dossiers and search, read bounded file windows, run
-noisy commands through summaries, and inspect compact diffs.
+noisy commands through summaries, and inspect compact diffs. Supported agents
+include Codex, Claude Code, and opencode.
+
+opencode registers MCP server tools with the server name as a prefix, so the
+tools listed below appear as `frontload_fl_policy`, `frontload_fl_repo_dossier`,
+etc. inside opencode. Codex and Claude Code use the bare names.
 
 You do not need to run `frontload index` before each task. `fl_repo_dossier` and
 `fl_search` build the repo index when it is missing and refresh changed files

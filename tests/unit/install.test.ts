@@ -4,8 +4,23 @@ import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { hookDefinitions } from "../../src/hooks/definitions.js";
-import { buildMcpEntry, detectPackageManager, globalInstallCommand, initAll, initProject, installGlobalFrontload, isGloballyInstalled, needsShellForWindowsShim, parseAgents, parseConfigScope, upgradeAll, upgradeGlobalFrontload } from "../../src/install/install.js";
+import {
+  buildMcpEntry,
+  detectPackageManager,
+  globalInstallCommand,
+  initAll,
+  initProject,
+  installGlobalFrontload,
+  isGloballyInstalled,
+  mcpConfigAdapters,
+  needsShellForWindowsShim,
+  parseAgents,
+  parseConfigScope,
+  upgradeAll,
+  upgradeGlobalFrontload,
+} from "../../src/install/install.js";
 import { stateExcludeStatus } from "../../src/utils/path.js";
+import { readJsonc } from "../../src/utils/jsonc.js";
 
 function writeExecutable(dir: string, name = "frontload"): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -21,7 +36,7 @@ describe("installer", () => {
     const result = initProject(repo);
     expect(result.map((write) => path.relative(repo, write.path))).toEqual([
       "frontload.config.json",
-      ".frontload"
+      ".frontload",
     ]);
     expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(true);
     expect(fs.existsSync(path.join(repo, "AGENTS.md"))).toBe(false);
@@ -35,11 +50,15 @@ describe("installer", () => {
 
     initProject(repo);
 
-    expect(fs.readFileSync(path.join(repo, ".git/info/exclude"), "utf8")).toContain(".frontload/");
+    expect(
+      fs.readFileSync(path.join(repo, ".git/info/exclude"), "utf8"),
+    ).toContain(".frontload/");
   });
 
   it("does not trust arbitrary .git file targets during init", () => {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-malformed-git-"));
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-malformed-git-"),
+    );
     const repo = path.join(parent, "repo");
     const outside = path.join(parent, "outside-git");
     fs.mkdirSync(repo);
@@ -51,7 +70,9 @@ describe("installer", () => {
   });
 
   it("keeps generated state ignored in linked worktrees", async () => {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-worktree-"));
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-worktree-"),
+    );
     const repo = path.join(parent, "repo");
     const worktree = path.join(parent, "worktree");
     await execa("git", ["init", repo]);
@@ -59,9 +80,16 @@ describe("installer", () => {
     await execa("git", ["add", "."], { cwd: repo });
     await execa("git", ["commit", "-m", "init"], {
       cwd: repo,
-      env: { GIT_AUTHOR_NAME: "A", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A", GIT_COMMITTER_EMAIL: "a@example.com" }
+      env: {
+        GIT_AUTHOR_NAME: "A",
+        GIT_AUTHOR_EMAIL: "a@example.com",
+        GIT_COMMITTER_NAME: "A",
+        GIT_COMMITTER_EMAIL: "a@example.com",
+      },
     });
-    await execa("git", ["worktree", "add", "-b", "worktree-branch", worktree], { cwd: repo });
+    await execa("git", ["worktree", "add", "-b", "worktree-branch", worktree], {
+      cwd: repo,
+    });
 
     initProject(worktree);
     const status = await execa("git", ["status", "--short"], { cwd: worktree });
@@ -71,22 +99,31 @@ describe("installer", () => {
   });
 
   it("configures Codex MCP from init", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-codex-"),
+    );
     const result = initAll(repo, ["codex"], home);
     const codexConfigFile = path.join(repo, ".codex/config.toml");
     const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
 
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
-    expect(result.agents[0].writes.map((write) => path.relative(repo, write.path))).toEqual([
+    expect(
+      result.agents[0].writes.map((write) => path.relative(repo, write.path)),
+    ).toEqual([
       ".codex/config.toml",
       path.relative(repo, path.join(home, ".codex/hooks.json")),
-      path.relative(repo, path.join(home, ".codex/skills/frontload"))
+      path.relative(repo, path.join(home, ".codex/skills/frontload")),
     ]);
     expect(codexConfig).toMatch(/^\[mcp_servers\.frontload_[^\]]+\]$/m);
     expect(codexConfig).toContain('command = "frontload"');
     expect(codexConfig).toContain(`args = ["mcp", "--repo", "${repo}"]`);
-    expect(JSON.parse(fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8")).hooks).toEqual({
+    expect(
+      JSON.parse(fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8"))
+        .hooks,
+    ).toEqual({
       PreToolUse: [
         {
           matcher: "^Bash$",
@@ -95,10 +132,10 @@ describe("installer", () => {
               type: "command",
               command: hookDefinitions.codex[0].hook.command,
               timeout: 10,
-              statusMessage: "Applying Frontload budget policy"
-            }
-          ]
-        }
+              statusMessage: "Applying Frontload budget policy",
+            },
+          ],
+        },
       ],
       PostToolUse: [
         {
@@ -108,51 +145,93 @@ describe("installer", () => {
               type: "command",
               command: hookDefinitions.codex[1].hook.command,
               timeout: 10,
-              statusMessage: "Bounding Frontload command output"
-            }
-          ]
-        }
-      ]
+              statusMessage: "Bounding Frontload command output",
+            },
+          ],
+        },
+      ],
     });
-    expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
-    expect(fs.readFileSync(path.join(home, ".codex/skills/frontload/SKILL.md"), "utf8")).toBe(
-      fs.readFileSync(path.resolve("plugins/codex/skills/frontload/SKILL.md"), "utf8")
+    expect(
+      fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md")),
+    ).toBe(true);
+    expect(
+      fs.readFileSync(
+        path.join(home, ".codex/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
+    ).toBe(
+      fs.readFileSync(
+        path.resolve("plugins/codex/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
     );
-    expect(fs.existsSync(path.join(home, "plugins/frontload/.codex-plugin/plugin.json"))).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(home, "plugins/frontload/.codex-plugin/plugin.json"),
+      ),
+    ).toBe(false);
   });
 
   it("configures two Codex repos without overwriting either MCP repo", () => {
-    const repoA = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-a-"));
-    const repoB = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-b-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-multi-"));
+    const repoA = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-a-"),
+    );
+    const repoB = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-b-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-codex-multi-"),
+    );
 
     initAll(repoA, ["codex"], home);
     initAll(repoB, ["codex"], home);
 
-    const configA = fs.readFileSync(path.join(repoA, ".codex/config.toml"), "utf8");
-    const configB = fs.readFileSync(path.join(repoB, ".codex/config.toml"), "utf8");
-    const hooks = JSON.parse(fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8"));
+    const configA = fs.readFileSync(
+      path.join(repoA, ".codex/config.toml"),
+      "utf8",
+    );
+    const configB = fs.readFileSync(
+      path.join(repoB, ".codex/config.toml"),
+      "utf8",
+    );
+    const hooks = JSON.parse(
+      fs.readFileSync(path.join(home, ".codex/hooks.json"), "utf8"),
+    );
 
     expect(configA).toContain(`args = ["mcp", "--repo", "${repoA}"]`);
     expect(configB).toContain(`args = ["mcp", "--repo", "${repoB}"]`);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
-    expect(hooks.hooks.PreToolUse[0].hooks[0].command).toBe(hookDefinitions.codex[0].hook.command);
+    expect(hooks.hooks.PreToolUse[0].hooks[0].command).toBe(
+      hookDefinitions.codex[0].hook.command,
+    );
   });
 
   it("uses distinct Codex MCP server names for distinct project repos", () => {
-    const parentA = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-a-"));
-    const parentB = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-b-"));
+    const parentA = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-a-"),
+    );
+    const parentB = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-b-"),
+    );
     const repoA = path.join(parentA, "app");
     const repoB = path.join(parentB, "app");
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-multi-"));
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-codex-multi-"),
+    );
     fs.mkdirSync(repoA);
     fs.mkdirSync(repoB);
 
     initAll(repoA, ["codex"], home);
     initAll(repoB, ["codex"], home);
 
-    const configA = fs.readFileSync(path.join(repoA, ".codex/config.toml"), "utf8");
-    const configB = fs.readFileSync(path.join(repoB, ".codex/config.toml"), "utf8");
+    const configA = fs.readFileSync(
+      path.join(repoA, ".codex/config.toml"),
+      "utf8",
+    );
+    const configB = fs.readFileSync(
+      path.join(repoB, ".codex/config.toml"),
+      "utf8",
+    );
     const serverA = configA.match(/^\[mcp_servers\.([^\]]+)\]$/m)?.[1];
     const serverB = configB.match(/^\[mcp_servers\.([^\]]+)\]$/m)?.[1];
 
@@ -167,21 +246,49 @@ describe("installer", () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-all-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-all-"));
     const result = initAll(repo, ["all"], home);
-    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+    const claudeConfig = JSON.parse(
+      fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"),
+    );
+    const opencodeConfig = JSON.parse(
+      fs.readFileSync(path.join(repo, "opencode.json"), "utf8"),
+    );
 
-    expect(result.agents.map((agent) => agent.agent)).toEqual(["codex", "claude"]);
+    expect(result.agents.map((agent) => agent.agent)).toEqual([
+      "codex",
+      "claude",
+      "opencode",
+    ]);
     expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".codex/config.toml"))).toBe(false);
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
-    expect(fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md"))).toBe(true);
-    expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
+    expect(
+      fs.existsSync(path.join(home, ".codex/skills/frontload/SKILL.md")),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md")),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(home, ".config/opencode/skills/frontload/SKILL.md"),
+      ),
+    ).toBe(true);
     expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(true);
     expect(claudeConfig.mcpServers.frontload).toEqual({
       type: "stdio",
       command: "frontload",
-      args: ["mcp", "--repo", repo]
+      args: ["mcp", "--repo", repo],
     });
-    expect(JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8")).hooks).toEqual({
+    expect(opencodeConfig.mcp.frontload).toEqual({
+      type: "local",
+      command: ["frontload", "mcp", "--repo", repo],
+      enabled: true,
+      timeout: 20000,
+    });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8"),
+      ).hooks,
+    ).toEqual({
       PreToolUse: [
         {
           matcher: "Read|Bash",
@@ -190,10 +297,10 @@ describe("installer", () => {
               type: "command",
               command: "frontload",
               args: ["hook", "pre-tool-use", "--host", "claude"],
-              timeout: 10
-            }
-          ]
-        }
+              timeout: 10,
+            },
+          ],
+        },
       ],
       PostToolUse: [
         {
@@ -203,72 +310,246 @@ describe("installer", () => {
               type: "command",
               command: "frontload",
               args: ["hook", "post-tool-use", "--host", "claude"],
-              timeout: 10
-            }
-          ]
-        }
-      ]
+              timeout: 10,
+            },
+          ],
+        },
+      ],
     });
   });
 
   it("can configure Claude Code globally", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-claude-global-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-claude-global-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-claude-global-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-claude-global-"),
+    );
     initAll(repo, ["claude"], home, false, "global");
-    const claudeConfig = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf8"));
+    const claudeConfig = JSON.parse(
+      fs.readFileSync(path.join(home, ".claude.json"), "utf8"),
+    );
 
     expect(claudeConfig.mcpServers.frontload).toEqual({
       type: "stdio",
       command: "frontload",
-      args: ["mcp", "--repo", repo]
+      args: ["mcp", "--repo", repo],
     });
-    expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(true);
-    expect(fs.readFileSync(path.join(home, ".claude/skills/frontload/SKILL.md"), "utf8")).toBe(
-      fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
+    expect(
+      fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md")),
+    ).toBe(true);
+    expect(
+      fs.readFileSync(
+        path.join(home, ".claude/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
+    ).toBe(
+      fs.readFileSync(
+        path.resolve("plugins/claude/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
     );
-    const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8"));
-    expect(settings.hooks.PreToolUse[0].hooks[0].args).toEqual(["hook", "pre-tool-use", "--host", "claude"]);
-    expect(settings.hooks.PostToolUse[0].hooks[0].args).toEqual(["hook", "post-tool-use", "--host", "claude"]);
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8"),
+    );
+    expect(settings.hooks.PreToolUse[0].hooks[0].args).toEqual([
+      "hook",
+      "pre-tool-use",
+      "--host",
+      "claude",
+    ]);
+    expect(settings.hooks.PostToolUse[0].hooks[0].args).toEqual([
+      "hook",
+      "post-tool-use",
+      "--host",
+      "claude",
+    ]);
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
   });
 
+  it("configures opencode MCP from init", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-opencode-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-opencode-"),
+    );
+    const result = initAll(repo, ["opencode"], home);
+    const opencodeConfig = JSON.parse(
+      fs.readFileSync(path.join(repo, "opencode.json"), "utf8"),
+    );
+
+    expect(result.agents.map((agent) => agent.agent)).toEqual(["opencode"]);
+    expect(
+      result.agents[0].writes.map((write) => path.relative(repo, write.path)),
+    ).toEqual([
+      "opencode.json",
+      path.relative(repo, path.join(home, ".config/opencode/skills/frontload")),
+    ]);
+    expect(opencodeConfig.mcp.frontload).toEqual({
+      type: "local",
+      command: ["frontload", "mcp", "--repo", repo],
+      enabled: true,
+      timeout: 20000,
+    });
+    expect(
+      fs.existsSync(
+        path.join(home, ".config/opencode/skills/frontload/SKILL.md"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.readFileSync(
+        path.join(home, ".config/opencode/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
+    ).toBe(
+      fs.readFileSync(
+        path.resolve("plugins/opencode/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
+    );
+    expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
+  });
+
+  it("can configure opencode globally", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-opencode-global-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-opencode-global-"),
+    );
+    initAll(repo, ["opencode"], home, false, "global");
+    const opencodeConfig = JSON.parse(
+      fs.readFileSync(
+        path.join(home, ".config/opencode/opencode.json"),
+        "utf8",
+      ),
+    );
+
+    expect(opencodeConfig.mcp.frontload).toEqual({
+      type: "local",
+      command: ["frontload", "mcp", "--repo", repo],
+      enabled: true,
+      timeout: 20000,
+    });
+    expect(
+      fs.existsSync(
+        path.join(home, ".config/opencode/skills/frontload/SKILL.md"),
+      ),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(repo, "opencode.json"))).toBe(false);
+  });
+
+  it("preserves existing opencode MCP servers on init", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-opencode-merge-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-opencode-merge-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, "opencode.json"),
+      JSON.stringify(
+        {
+          mcp: { existing: { type: "remote", url: "https://example.com" } },
+        },
+        null,
+        2,
+      ),
+    );
+    initAll(repo, ["opencode"], home);
+    const config = JSON.parse(
+      fs.readFileSync(path.join(repo, "opencode.json"), "utf8"),
+    );
+
+    expect(config.mcp.existing).toEqual({
+      type: "remote",
+      url: "https://example.com",
+    });
+    expect(config.mcp.frontload.command).toEqual([
+      "frontload",
+      "mcp",
+      "--repo",
+      repo,
+    ]);
+  });
+
   it("preserves existing Claude MCP servers and hooks", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-merge-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-merge-"));
-    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({ mcpServers: { existing: { command: "other" } } }, null, 2));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-merge-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-merge-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, ".mcp.json"),
+      JSON.stringify(
+        { mcpServers: { existing: { command: "other" } } },
+        null,
+        2,
+      ),
+    );
     fs.mkdirSync(path.join(repo, ".claude"), { recursive: true });
-    fs.writeFileSync(path.join(repo, ".claude/settings.json"), JSON.stringify({
-      hooks: {
-        PreToolUse: [
-          {
-            matcher: "Write",
-            hooks: [{ type: "command", command: "other-hook" }]
+    fs.writeFileSync(
+      path.join(repo, ".claude/settings.json"),
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Write",
+                hooks: [{ type: "command", command: "other-hook" }],
+              },
+              {
+                matcher: "Bash",
+                hooks: [
+                  {
+                    type: "command",
+                    command: "frontload",
+                    args: ["hook", "pre-tool-use"],
+                    timeout: 3,
+                  },
+                ],
+              },
+            ],
+            PostToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [{ type: "command", command: "post-hook" }],
+              },
+              {
+                matcher: "Glob",
+                hooks: [
+                  {
+                    type: "command",
+                    command: "frontload",
+                    args: ["hook", "post-tool-use"],
+                    timeout: 3,
+                  },
+                ],
+              },
+            ],
           },
-          {
-            matcher: "Bash",
-            hooks: [{ type: "command", command: "frontload", args: ["hook", "pre-tool-use"], timeout: 3 }]
-          }
-        ],
-        PostToolUse: [
-          {
-            matcher: "Bash",
-            hooks: [{ type: "command", command: "post-hook" }]
-          },
-          {
-            matcher: "Glob",
-            hooks: [{ type: "command", command: "frontload", args: ["hook", "post-tool-use"], timeout: 3 }]
-          }
-        ]
-      }
-    }, null, 2));
+        },
+        null,
+        2,
+      ),
+    );
     initAll(repo, ["claude"], home);
-    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
-    const claudeSettings = JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8"));
+    const claudeConfig = JSON.parse(
+      fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"),
+    );
+    const claudeSettings = JSON.parse(
+      fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8"),
+    );
 
     expect(claudeConfig.mcpServers.existing).toEqual({ command: "other" });
     expect(claudeConfig.mcpServers.frontload.command).toBe("frontload");
     expect(claudeSettings.hooks.PostToolUse).toHaveLength(2);
-    expect(claudeSettings.hooks.PostToolUse[0].hooks[0].command).toBe("post-hook");
+    expect(claudeSettings.hooks.PostToolUse[0].hooks[0].command).toBe(
+      "post-hook",
+    );
     expect(claudeSettings.hooks.PostToolUse[1]).toEqual({
       matcher: "Grep|Glob",
       hooks: [
@@ -276,12 +557,14 @@ describe("installer", () => {
           type: "command",
           command: "frontload",
           args: ["hook", "post-tool-use", "--host", "claude"],
-          timeout: 10
-        }
-      ]
+          timeout: 10,
+        },
+      ],
     });
     expect(claudeSettings.hooks.PreToolUse).toHaveLength(2);
-    expect(claudeSettings.hooks.PreToolUse[0].hooks[0].command).toBe("other-hook");
+    expect(claudeSettings.hooks.PreToolUse[0].hooks[0].command).toBe(
+      "other-hook",
+    );
     expect(claudeSettings.hooks.PreToolUse[1]).toEqual({
       matcher: "Read|Bash",
       hooks: [
@@ -289,28 +572,35 @@ describe("installer", () => {
           type: "command",
           command: "frontload",
           args: ["hook", "pre-tool-use", "--host", "claude"],
-          timeout: 10
-        }
-      ]
+          timeout: 10,
+        },
+      ],
     });
   });
 
   it("replaces stale Codex frontload tables without touching other servers", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-merge-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-merge-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-merge-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-codex-merge-"),
+    );
     const configFile = path.join(repo, ".codex/config.toml");
     fs.mkdirSync(path.dirname(configFile), { recursive: true });
-    fs.writeFileSync(configFile, [
-      "[mcp_servers.other]",
-      "command = \"other\"",
-      "",
-      "[mcp_servers.frontload]",
-      "command = \"old-frontload\"",
-      "",
-      "[mcp_servers.frontload.env]",
-      "OLD = \"1\"",
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      configFile,
+      [
+        "[mcp_servers.other]",
+        'command = "other"',
+        "",
+        "[mcp_servers.frontload]",
+        'command = "old-frontload"',
+        "",
+        "[mcp_servers.frontload.env]",
+        'OLD = "1"',
+        "",
+      ].join("\n"),
+    );
     initAll(repo, ["codex"], home);
     const codexConfig = fs.readFileSync(configFile, "utf8");
 
@@ -321,22 +611,29 @@ describe("installer", () => {
   });
 
   it("preserves unrelated Codex frontload-prefixed servers", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-prefix-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-prefix-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-prefix-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-codex-prefix-"),
+    );
     const configFile = path.join(repo, ".codex/config.toml");
     fs.mkdirSync(path.dirname(configFile), { recursive: true });
-    fs.writeFileSync(configFile, [
-      "[mcp_servers.frontload_proxy]",
-      "command = \"proxy\"",
-      "args = [\"serve\"]",
-      "",
-      "[mcp_servers.frontload]",
-      "command = \"old-frontload\"",
-      "",
-      "[mcp_servers.other]",
-      "command = \"other\"",
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      configFile,
+      [
+        "[mcp_servers.frontload_proxy]",
+        'command = "proxy"',
+        'args = ["serve"]',
+        "",
+        "[mcp_servers.frontload]",
+        'command = "old-frontload"',
+        "",
+        "[mcp_servers.other]",
+        'command = "other"',
+        "",
+      ].join("\n"),
+    );
 
     initAll(repo, ["codex"], home);
     const codexConfig = fs.readFileSync(configFile, "utf8");
@@ -349,56 +646,90 @@ describe("installer", () => {
   });
 
   it("preserves unrelated Codex hooks and replaces stale Frontload hooks", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-codex-hooks-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-codex-hooks-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-init-codex-hooks-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-codex-hooks-"),
+    );
     const hooksFile = path.join(home, ".codex/hooks.json");
     fs.mkdirSync(path.dirname(hooksFile), { recursive: true });
-    fs.writeFileSync(hooksFile, JSON.stringify({
-      hooks: {
-        PreToolUse: [
-          {
-            matcher: "^apply_patch$",
-            hooks: [{ type: "command", command: "other-pre-hook" }]
+    fs.writeFileSync(
+      hooksFile,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "^apply_patch$",
+                hooks: [{ type: "command", command: "other-pre-hook" }],
+              },
+              {
+                matcher: "^Bash$",
+                hooks: [
+                  {
+                    type: "command",
+                    command: "frontload hook pre-tool-use",
+                    timeout: 3,
+                  },
+                ],
+              },
+            ],
+            PostToolUse: [
+              {
+                matcher: "^Bash$",
+                hooks: [
+                  { type: "command", command: "other-post-hook" },
+                  {
+                    type: "command",
+                    command: "frontload hook post-tool-use",
+                    timeout: 3,
+                  },
+                ],
+              },
+            ],
           },
-          {
-            matcher: "^Bash$",
-            hooks: [{ type: "command", command: "frontload hook pre-tool-use", timeout: 3 }]
-          }
-        ],
-        PostToolUse: [
-          {
-            matcher: "^Bash$",
-            hooks: [
-              { type: "command", command: "other-post-hook" },
-              { type: "command", command: "frontload hook post-tool-use", timeout: 3 }
-            ]
-          }
-        ]
-      }
-    }, null, 2));
+        },
+        null,
+        2,
+      ),
+    );
 
     const result = initAll(repo, ["codex"], home);
     const hooks = JSON.parse(fs.readFileSync(hooksFile, "utf8")).hooks;
 
     expect(result.agents[0].notes.join(" ")).toContain("/hooks");
     expect(hooks.PreToolUse).toHaveLength(2);
-    expect(hooks.PreToolUse[0].hooks).toEqual([{ type: "command", command: "other-pre-hook" }]);
-    expect(hooks.PreToolUse[1].hooks[0].command).toBe(hookDefinitions.codex[0].hook.command);
+    expect(hooks.PreToolUse[0].hooks).toEqual([
+      { type: "command", command: "other-pre-hook" },
+    ]);
+    expect(hooks.PreToolUse[1].hooks[0].command).toBe(
+      hookDefinitions.codex[0].hook.command,
+    );
     expect(hooks.PostToolUse).toHaveLength(2);
-    expect(hooks.PostToolUse[0].hooks).toEqual([{ type: "command", command: "other-post-hook" }]);
-    expect(hooks.PostToolUse[1].hooks[0].command).toBe(hookDefinitions.codex[1].hook.command);
+    expect(hooks.PostToolUse[0].hooks).toEqual([
+      { type: "command", command: "other-post-hook" },
+    ]);
+    expect(hooks.PostToolUse[1].hooks[0].command).toBe(
+      hookDefinitions.codex[1].hook.command,
+    );
   });
 
   it("parses agent lists", () => {
     expect(parseAgents("codex,claude")).toEqual(["codex", "claude"]);
     expect(parseAgents("codex,codex")).toEqual(["codex"]);
+    expect(parseAgents("opencode")).toEqual(["opencode"]);
+    expect(parseAgents("codex,opencode")).toEqual(["codex", "opencode"]);
     expect(parseAgents("all,codex")).toEqual(["all"]);
     expect(parseAgents("none")).toEqual([]);
     expect(() => parseAgents("cursor")).toThrow("Unknown agent");
   });
 
   it("builds the portable MCP entry", () => {
-    expect(buildMcpEntry()).toEqual({ command: "frontload", args: ["mcp", "--repo", "."] });
+    expect(buildMcpEntry()).toEqual({
+      command: "frontload",
+      args: ["mcp", "--repo", "."],
+    });
   });
 
   it("parses config scope and package managers", () => {
@@ -406,17 +737,49 @@ describe("installer", () => {
     expect(parseConfigScope("global")).toBe("global");
     expect(() => parseConfigScope("workspace")).toThrow("Unknown config scope");
     expect(detectPackageManager("pnpm/10.14.0 npm/? node/?")).toBe("pnpm");
-    expect(globalInstallCommand()).toEqual({ packageManager: "npm", command: "npm", args: ["install", "-g", "frontload"] });
-    expect(globalInstallCommand("bun")).toEqual({ packageManager: "bun", command: "bun", args: ["add", "-g", "frontload"] });
+    expect(globalInstallCommand()).toEqual({
+      packageManager: "npm",
+      command: "npm",
+      args: ["install", "-g", "frontload"],
+    });
+    expect(globalInstallCommand("bun")).toEqual({
+      packageManager: "bun",
+      command: "bun",
+      args: ["add", "-g", "frontload"],
+    });
   });
 
   it("detects Windows .cmd and .bat shims requiring shell invocation", () => {
-    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.cmd", "win32")).toBe(true);
-    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.CMD", "win32")).toBe(true);
-    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.bat", "win32")).toBe(true);
-    expect(needsShellForWindowsShim("C:\\Users\\appdata\\npm\\frontload.exe", "win32")).toBe(false);
-    expect(needsShellForWindowsShim("/usr/local/bin/frontload", "darwin")).toBe(false);
-    expect(needsShellForWindowsShim("/usr/local/bin/frontload.cmd", "linux")).toBe(false);
+    expect(
+      needsShellForWindowsShim(
+        "C:\\Users\\appdata\\npm\\frontload.cmd",
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      needsShellForWindowsShim(
+        "C:\\Users\\appdata\\npm\\frontload.CMD",
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      needsShellForWindowsShim(
+        "C:\\Users\\appdata\\npm\\frontload.bat",
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      needsShellForWindowsShim(
+        "C:\\Users\\appdata\\npm\\frontload.exe",
+        "win32",
+      ),
+    ).toBe(false);
+    expect(needsShellForWindowsShim("/usr/local/bin/frontload", "darwin")).toBe(
+      false,
+    );
+    expect(
+      needsShellForWindowsShim("/usr/local/bin/frontload.cmd", "linux"),
+    ).toBe(false);
   });
 
   it("looks past temporary npx shims when checking for global installs", () => {
@@ -429,8 +792,15 @@ describe("installer", () => {
     writeExecutable(globalBin);
 
     expect(isGloballyInstalled("frontload", npxBin)).toBe(false);
-    expect(isGloballyInstalled("frontload", `${npxBin}${path.delimiter}${localBin}`)).toBe(false);
-    expect(isGloballyInstalled("frontload", `${npxBin}${path.delimiter}${localBin}${path.delimiter}${globalBin}`)).toBe(true);
+    expect(
+      isGloballyInstalled("frontload", `${npxBin}${path.delimiter}${localBin}`),
+    ).toBe(false);
+    expect(
+      isGloballyInstalled(
+        "frontload",
+        `${npxBin}${path.delimiter}${localBin}${path.delimiter}${globalBin}`,
+      ),
+    ).toBe(true);
   });
 
   it("verifies frontload is on PATH after global install", () => {
@@ -454,7 +824,9 @@ describe("installer", () => {
 
   it("upgrades the global package to the latest tag", () => {
     const oldPath = process.env.PATH;
-    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-global-upgrade-bin-"));
+    const bin = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-global-upgrade-bin-"),
+    );
     process.env.PATH = bin;
     writeExecutable(bin);
     try {
@@ -464,7 +836,9 @@ describe("installer", () => {
       });
 
       expect(upgraded.action).toBe("updated");
-      expect(calls).toEqual([{ command: "npm", args: ["install", "-g", "frontload@latest"] }]);
+      expect(calls).toEqual([
+        { command: "npm", args: ["install", "-g", "frontload@latest"] },
+      ]);
     } finally {
       process.env.PATH = oldPath;
     }
@@ -472,18 +846,30 @@ describe("installer", () => {
 
   it("skips upgrade when already at the latest version", () => {
     const oldPath = process.env.PATH;
-    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-global-upgrade-current-bin-"));
+    const bin = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-global-upgrade-current-bin-"),
+    );
     process.env.PATH = bin;
     writeExecutable(bin);
     try {
       const calls: Array<{ command: string; args: string[] }> = [];
-      const currentVersion = (JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as { version: string }).version;
-      const upgraded = upgradeGlobalFrontload("npm", (command, args) => {
-        calls.push({ command, args });
-      }, () => currentVersion);
+      const currentVersion = (
+        JSON.parse(
+          fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+        ) as { version: string }
+      ).version;
+      const upgraded = upgradeGlobalFrontload(
+        "npm",
+        (command, args) => {
+          calls.push({ command, args });
+        },
+        () => currentVersion,
+      );
 
       expect(upgraded.action).toBe("skipped");
-      expect(upgraded.notes[0]).toContain(`Already at the latest version (${currentVersion})`);
+      expect(upgraded.notes[0]).toContain(
+        `Already at the latest version (${currentVersion})`,
+      );
       expect(calls).toEqual([]);
     } finally {
       process.env.PATH = oldPath;
@@ -492,39 +878,57 @@ describe("installer", () => {
 
   it("proceeds with upgrade when version check fails", () => {
     const oldPath = process.env.PATH;
-    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-global-upgrade-version-fail-bin-"));
+    const bin = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-global-upgrade-version-fail-bin-"),
+    );
     process.env.PATH = bin;
     writeExecutable(bin);
     try {
       const calls: Array<{ command: string; args: string[] }> = [];
-      const upgraded = upgradeGlobalFrontload("npm", (command, args) => {
-        calls.push({ command, args });
-      }, () => undefined);
+      const upgraded = upgradeGlobalFrontload(
+        "npm",
+        (command, args) => {
+          calls.push({ command, args });
+        },
+        () => undefined,
+      );
 
       expect(upgraded.action).toBe("updated");
-      expect(calls).toEqual([{ command: "npm", args: ["install", "-g", "frontload@latest"] }]);
+      expect(calls).toEqual([
+        { command: "npm", args: ["install", "-g", "frontload@latest"] },
+      ]);
     } finally {
       process.env.PATH = oldPath;
     }
   });
 
   it("upgrades only existing Codex configuration and refreshes managed skills", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-codex-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-codex-"));
-    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({ custom: true }));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-codex-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-codex-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, "frontload.config.json"),
+      JSON.stringify({ custom: true }),
+    );
     fs.writeFileSync(path.join(repo, "AGENTS.md"), "custom agents\n");
     const codexConfigFile = path.join(home, ".codex/config.toml");
     fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
     const configuredRepo = path.join(repo, "configured-repo");
-    fs.writeFileSync(codexConfigFile, [
-      "[mcp_servers.frontload]",
-      "command = \"old-frontload\"",
-      `args = ["mcp", "--repo", "${configuredRepo}"]`,
-      "",
-      "[mcp_servers.other]",
-      "command = \"other\"",
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      codexConfigFile,
+      [
+        "[mcp_servers.frontload]",
+        'command = "old-frontload"',
+        `args = ["mcp", "--repo", "${configuredRepo}"]`,
+        "",
+        "[mcp_servers.other]",
+        'command = "other"',
+        "",
+      ].join("\n"),
+    );
     const skillFile = path.join(home, ".codex/skills/frontload/SKILL.md");
     fs.mkdirSync(path.dirname(skillFile), { recursive: true });
     fs.writeFileSync(skillFile, "old skill\n");
@@ -537,34 +941,54 @@ describe("installer", () => {
 
     expect(result.project).toEqual([]);
     expect(result.agents.map((agent) => agent.agent)).toEqual(["codex"]);
-    expect(result.agents[0].notes[0]).toContain("legacy global ~/.codex/config.toml");
+    expect(result.agents[0].notes[0]).toContain(
+      "legacy global ~/.codex/config.toml",
+    );
     expect(codexConfig).toContain("[mcp_servers.other]");
     expect(codexConfig).toContain('command = "frontload"');
-    expect(codexConfig).toContain(`args = ["mcp", "--repo", "${configuredRepo}"]`);
+    expect(codexConfig).toContain(
+      `args = ["mcp", "--repo", "${configuredRepo}"]`,
+    );
     expect(codexConfig).not.toContain("old-frontload");
     expect(fs.readFileSync(skillFile, "utf8")).toBe(
-      fs.readFileSync(path.resolve("plugins/codex/skills/frontload/SKILL.md"), "utf8")
+      fs.readFileSync(
+        path.resolve("plugins/codex/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
     );
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
-    expect(fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md"))).toBe(false);
-    expect(fs.readFileSync(path.join(repo, "frontload.config.json"), "utf8")).toBe(JSON.stringify({ custom: true }));
-    expect(fs.readFileSync(path.join(repo, "AGENTS.md"), "utf8")).toBe("custom agents\n");
+    expect(
+      fs.existsSync(path.join(home, ".claude/skills/frontload/SKILL.md")),
+    ).toBe(false);
+    expect(
+      fs.readFileSync(path.join(repo, "frontload.config.json"), "utf8"),
+    ).toBe(JSON.stringify({ custom: true }));
+    expect(fs.readFileSync(path.join(repo, "AGENTS.md"), "utf8")).toBe(
+      "custom agents\n",
+    );
   });
 
   it("repins stale absolute Codex repo args to the current repo during upgrade", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-stale-codex-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-stale-codex-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-stale-codex-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-stale-codex-"),
+    );
     const codexConfigFile = path.join(home, ".codex/config.toml");
     const staleRepo = path.join(os.tmpdir(), "frontload-missing-worktree");
     fs.rmSync(staleRepo, { recursive: true, force: true });
     fs.mkdirSync(path.join(staleRepo, ".frontload"), { recursive: true });
     fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
-    fs.writeFileSync(codexConfigFile, [
-      "[mcp_servers.frontload]",
-      "command = \"frontload\"",
-      `args = ["mcp", "--repo", "${staleRepo}"]`,
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      codexConfigFile,
+      [
+        "[mcp_servers.frontload]",
+        'command = "frontload"',
+        `args = ["mcp", "--repo", "${staleRepo}"]`,
+        "",
+      ].join("\n"),
+    );
 
     upgradeAll(repo, home);
     const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
@@ -574,17 +998,26 @@ describe("installer", () => {
   });
 
   it("preserves existing absolute Codex repo args without Frontload marker files during upgrade", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-current-codex-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-plain-codex-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-current-codex-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-plain-codex-"),
+    );
     const codexConfigFile = path.join(home, ".codex/config.toml");
-    const plainRepo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-plain-target-"));
+    const plainRepo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-plain-target-"),
+    );
     fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
-    fs.writeFileSync(codexConfigFile, [
-      "[mcp_servers.frontload]",
-      "command = \"frontload\"",
-      `args = ["mcp", "--repo", "${plainRepo}"]`,
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      codexConfigFile,
+      [
+        "[mcp_servers.frontload]",
+        'command = "frontload"',
+        `args = ["mcp", "--repo", "${plainRepo}"]`,
+        "",
+      ].join("\n"),
+    );
 
     upgradeAll(repo, home);
     const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
@@ -594,19 +1027,26 @@ describe("installer", () => {
   });
 
   it("refreshes existing project-local Codex configuration during upgrade", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-project-codex-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-project-codex-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-project-codex-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-project-codex-"),
+    );
     const codexConfigFile = path.join(repo, ".codex/config.toml");
     fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
-    fs.writeFileSync(codexConfigFile, [
-      "[mcp_servers.frontload]",
-      "command = \"old-frontload\"",
-      "args = [\"mcp\", \"--repo\", \".\"]",
-      "",
-      "[mcp_servers.other]",
-      "command = \"other\"",
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      codexConfigFile,
+      [
+        "[mcp_servers.frontload]",
+        'command = "old-frontload"',
+        'args = ["mcp", "--repo", "."]',
+        "",
+        "[mcp_servers.other]",
+        'command = "other"',
+        "",
+      ].join("\n"),
+    );
 
     const result = upgradeAll(repo, home);
     const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
@@ -620,16 +1060,23 @@ describe("installer", () => {
   });
 
   it("refreshes legacy dot repo args to the current repo during upgrade", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-dot-repo-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-dot-repo-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-dot-repo-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-dot-repo-"),
+    );
     const codexConfigFile = path.join(home, ".codex/config.toml");
     fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
-    fs.writeFileSync(codexConfigFile, [
-      "[mcp_servers.frontload]",
-      "command = \"frontload\"",
-      "args = [\"mcp\", \"--repo\", \".\"]",
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      codexConfigFile,
+      [
+        "[mcp_servers.frontload]",
+        'command = "frontload"',
+        'args = ["mcp", "--repo", "."]',
+        "",
+      ].join("\n"),
+    );
 
     upgradeAll(repo, home);
     const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
@@ -638,110 +1085,201 @@ describe("installer", () => {
   });
 
   it("pins relative Codex repo args against the current repo during upgrade", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-relative-repo-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-relative-repo-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-relative-repo-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-relative-repo-"),
+    );
     const codexConfigFile = path.join(home, ".codex/config.toml");
     fs.mkdirSync(path.dirname(codexConfigFile), { recursive: true });
-    fs.writeFileSync(codexConfigFile, [
-      "[mcp_servers.frontload]",
-      "command = \"frontload\"",
-      "args = [\"mcp\", \"--repo\", \"packages/app\"]",
-      ""
-    ].join("\n"));
+    fs.writeFileSync(
+      codexConfigFile,
+      [
+        "[mcp_servers.frontload]",
+        'command = "frontload"',
+        'args = ["mcp", "--repo", "packages/app"]',
+        "",
+      ].join("\n"),
+    );
 
     upgradeAll(repo, home);
     const codexConfig = fs.readFileSync(codexConfigFile, "utf8");
 
-    expect(codexConfig).toContain(`args = ["mcp", "--repo", "${path.join(repo, "packages/app")}"]`);
+    expect(codexConfig).toContain(
+      `args = ["mcp", "--repo", "${path.join(repo, "packages/app")}"]`,
+    );
   });
 
   it("refreshes legacy dot repo args for Claude project and global configs", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-claude-dot-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-claude-dot-"));
-    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({
-      mcpServers: {
-        frontload: {
-          type: "stdio",
-          command: "old-frontload",
-          args: ["mcp", "--repo", "."]
-        }
-      }
-    }, null, 2));
-    fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({
-      mcpServers: {
-        frontload: {
-          type: "stdio",
-          command: "old-frontload",
-          args: ["mcp", "--repo", "."]
-        }
-      }
-    }, null, 2));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-claude-dot-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-claude-dot-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, ".mcp.json"),
+      JSON.stringify(
+        {
+          mcpServers: {
+            frontload: {
+              type: "stdio",
+              command: "old-frontload",
+              args: ["mcp", "--repo", "."],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(home, ".claude.json"),
+      JSON.stringify(
+        {
+          mcpServers: {
+            frontload: {
+              type: "stdio",
+              command: "old-frontload",
+              args: ["mcp", "--repo", "."],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
 
     upgradeAll(repo, home);
-    const projectConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
-    const globalConfig = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf8"));
+    const projectConfig = JSON.parse(
+      fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"),
+    );
+    const globalConfig = JSON.parse(
+      fs.readFileSync(path.join(home, ".claude.json"), "utf8"),
+    );
 
-    expect(projectConfig.mcpServers.frontload.args).toEqual(["mcp", "--repo", repo]);
-    expect(globalConfig.mcpServers.frontload.args).toEqual(["mcp", "--repo", repo]);
+    expect(projectConfig.mcpServers.frontload.args).toEqual([
+      "mcp",
+      "--repo",
+      repo,
+    ]);
+    expect(globalConfig.mcpServers.frontload.args).toEqual([
+      "mcp",
+      "--repo",
+      repo,
+    ]);
   });
 
   it("repins stale absolute Claude repo args to the current repo during upgrade", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-stale-claude-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-stale-claude-"));
-    const staleRepo = path.join(os.tmpdir(), "frontload-missing-claude-worktree");
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-stale-claude-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-stale-claude-"),
+    );
+    const staleRepo = path.join(
+      os.tmpdir(),
+      "frontload-missing-claude-worktree",
+    );
     fs.rmSync(staleRepo, { recursive: true, force: true });
     fs.mkdirSync(path.join(staleRepo, ".frontload"), { recursive: true });
-    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({
-      mcpServers: {
-        frontload: {
-          type: "stdio",
-          command: "frontload",
-          args: ["mcp", "--repo", staleRepo]
-        }
-      }
-    }, null, 2));
+    fs.writeFileSync(
+      path.join(repo, ".mcp.json"),
+      JSON.stringify(
+        {
+          mcpServers: {
+            frontload: {
+              type: "stdio",
+              command: "frontload",
+              args: ["mcp", "--repo", staleRepo],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
     fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
 
     upgradeAll(repo, home);
-    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+    const claudeConfig = JSON.parse(
+      fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"),
+    );
 
-    expect(claudeConfig.mcpServers.frontload.args).toEqual(["mcp", "--repo", repo]);
+    expect(claudeConfig.mcpServers.frontload.args).toEqual([
+      "mcp",
+      "--repo",
+      repo,
+    ]);
   });
 
   it("upgrades existing Claude project configuration without creating new project scaffolding", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-claude-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-claude-"));
-    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({ mcpServers: { frontload: { command: "old-frontload" } } }, null, 2));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-claude-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-claude-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, ".mcp.json"),
+      JSON.stringify(
+        { mcpServers: { frontload: { command: "old-frontload" } } },
+        null,
+        2,
+      ),
+    );
     fs.mkdirSync(path.join(repo, ".claude"), { recursive: true });
-    fs.writeFileSync(path.join(repo, ".claude/settings.json"), JSON.stringify({
-      hooks: {
-        PreToolUse: [
-          {
-            matcher: "Bash",
-            hooks: [{ type: "command", command: "frontload", args: ["hook", "pre-tool-use"], timeout: 3 }]
-          }
-        ]
-      }
-    }, null, 2));
+    fs.writeFileSync(
+      path.join(repo, ".claude/settings.json"),
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [
+                  {
+                    type: "command",
+                    command: "frontload",
+                    args: ["hook", "pre-tool-use"],
+                    timeout: 3,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+    );
     const skillFile = path.join(home, ".claude/skills/frontload/SKILL.md");
     fs.mkdirSync(path.dirname(skillFile), { recursive: true });
     fs.writeFileSync(skillFile, "old skill\n");
 
     const result = upgradeAll(repo, home);
-    const claudeConfig = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"));
-    const claudeSettings = JSON.parse(fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8"));
+    const claudeConfig = JSON.parse(
+      fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"),
+    );
+    const claudeSettings = JSON.parse(
+      fs.readFileSync(path.join(repo, ".claude/settings.json"), "utf8"),
+    );
 
     expect(result.project).toEqual([]);
     expect(result.agents.map((agent) => agent.agent)).toEqual(["claude"]);
     expect(claudeConfig.mcpServers.frontload).toEqual({
       type: "stdio",
       command: "frontload",
-      args: ["mcp", "--repo", repo]
+      args: ["mcp", "--repo", repo],
     });
     expect(claudeSettings.hooks.PreToolUse[0].matcher).toBe("Read|Bash");
     expect(claudeSettings.hooks.PostToolUse).toBeUndefined();
     expect(fs.readFileSync(skillFile, "utf8")).toBe(
-      fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
+      fs.readFileSync(
+        path.resolve("plugins/claude/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
     );
     expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(false);
     expect(fs.existsSync(path.join(repo, "AGENTS.md"))).toBe(false);
@@ -749,53 +1287,393 @@ describe("installer", () => {
   });
 
   it("upgrades existing Claude global configuration without creating project-local Claude config", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-claude-global-"));
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-home-upgrade-claude-global-"));
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-claude-global-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-claude-global-"),
+    );
     const configuredRepo = path.join(repo, "configured-global-repo");
     fs.mkdirSync(configuredRepo);
     fs.writeFileSync(path.join(configuredRepo, "frontload.config.json"), "{}");
-    fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({
-      mcpServers: {
-        frontload: {
-          type: "stdio",
-          command: "old-frontload",
-          args: ["mcp", "--repo", configuredRepo]
-        }
-      }
-    }, null, 2));
+    fs.writeFileSync(
+      path.join(home, ".claude.json"),
+      JSON.stringify(
+        {
+          mcpServers: {
+            frontload: {
+              type: "stdio",
+              command: "old-frontload",
+              args: ["mcp", "--repo", configuredRepo],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
     fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
-    fs.writeFileSync(path.join(home, ".claude/settings.json"), JSON.stringify({
-      hooks: {
-        PostToolUse: [
-          {
-            matcher: "Glob",
-            hooks: [{ type: "command", command: "frontload", args: ["hook", "post-tool-use"], timeout: 3 }]
-          }
-        ]
-      }
-    }, null, 2));
+    fs.writeFileSync(
+      path.join(home, ".claude/settings.json"),
+      JSON.stringify(
+        {
+          hooks: {
+            PostToolUse: [
+              {
+                matcher: "Glob",
+                hooks: [
+                  {
+                    type: "command",
+                    command: "frontload",
+                    args: ["hook", "post-tool-use"],
+                    timeout: 3,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+    );
     const skillFile = path.join(home, ".claude/skills/frontload/SKILL.md");
     fs.mkdirSync(path.dirname(skillFile), { recursive: true });
     fs.writeFileSync(skillFile, "old skill\n");
 
     const result = upgradeAll(repo, home);
-    const claudeConfig = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf8"));
-    const claudeSettings = JSON.parse(fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8"));
+    const claudeConfig = JSON.parse(
+      fs.readFileSync(path.join(home, ".claude.json"), "utf8"),
+    );
+    const claudeSettings = JSON.parse(
+      fs.readFileSync(path.join(home, ".claude/settings.json"), "utf8"),
+    );
 
     expect(result.project).toEqual([]);
     expect(result.agents.map((agent) => agent.agent)).toEqual(["claude"]);
     expect(claudeConfig.mcpServers.frontload).toEqual({
       type: "stdio",
       command: "frontload",
-      args: ["mcp", "--repo", configuredRepo]
+      args: ["mcp", "--repo", configuredRepo],
     });
     expect(claudeSettings.hooks.PreToolUse).toBeUndefined();
     expect(claudeSettings.hooks.PostToolUse[0].matcher).toBe("Grep|Glob");
     expect(fs.readFileSync(skillFile, "utf8")).toBe(
-      fs.readFileSync(path.resolve("plugins/claude/skills/frontload/SKILL.md"), "utf8")
+      fs.readFileSync(
+        path.resolve("plugins/claude/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
     );
     expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".claude/settings.json"))).toBe(false);
     expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(false);
+  });
+
+  it("upgrades existing opencode project configuration", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-opencode-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-opencode-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, "opencode.json"),
+      JSON.stringify(
+        {
+          mcp: {
+            frontload: {
+              type: "local",
+              command: ["frontload", "mcp", "--repo", "."],
+              enabled: true,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    const skillFile = path.join(
+      home,
+      ".config/opencode/skills/frontload/SKILL.md",
+    );
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+
+    const result = upgradeAll(repo, home);
+    const config = JSON.parse(
+      fs.readFileSync(path.join(repo, "opencode.json"), "utf8"),
+    );
+
+    expect(result.project).toEqual([]);
+    expect(result.agents.map((agent) => agent.agent)).toEqual(["opencode"]);
+    expect(result.agents[0].notes[0]).toContain("project opencode.json");
+    expect(config.mcp.frontload).toEqual({
+      type: "local",
+      command: ["frontload", "mcp", "--repo", repo],
+      enabled: true,
+      timeout: 20000,
+    });
+    expect(fs.readFileSync(skillFile, "utf8")).toBe(
+      fs.readFileSync(
+        path.resolve("plugins/opencode/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
+    );
+  });
+
+  it("upgrades existing opencode global configuration", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-opencode-global-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-opencode-global-"),
+    );
+    fs.mkdirSync(path.join(home, ".config/opencode"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".config/opencode/opencode.json"),
+      JSON.stringify(
+        {
+          mcp: {
+            frontload: {
+              type: "local",
+              command: ["frontload", "mcp", "--repo", "."],
+              enabled: true,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    const skillFile = path.join(
+      home,
+      ".config/opencode/skills/frontload/SKILL.md",
+    );
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+
+    const result = upgradeAll(repo, home);
+    const config = JSON.parse(
+      fs.readFileSync(
+        path.join(home, ".config/opencode/opencode.json"),
+        "utf8",
+      ),
+    );
+
+    expect(result.project).toEqual([]);
+    expect(result.agents.map((agent) => agent.agent)).toEqual(["opencode"]);
+    expect(result.agents[0].notes[0]).toContain(
+      "global ~/.config/opencode/opencode.json",
+    );
+    expect(config.mcp.frontload).toEqual({
+      type: "local",
+      command: ["frontload", "mcp", "--repo", repo],
+      enabled: true,
+      timeout: 20000,
+    });
+    expect(fs.readFileSync(skillFile, "utf8")).toBe(
+      fs.readFileSync(
+        path.resolve("plugins/opencode/skills/frontload/SKILL.md"),
+        "utf8",
+      ),
+    );
+  });
+
+  it("repins stale absolute opencode repo args during upgrade", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-stale-opencode-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-stale-opencode-"),
+    );
+    const staleRepo = path.join(
+      os.tmpdir(),
+      "frontload-missing-opencode-worktree",
+    );
+    fs.rmSync(staleRepo, { recursive: true, force: true });
+    fs.mkdirSync(path.join(staleRepo, ".frontload"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repo, "opencode.json"),
+      JSON.stringify(
+        {
+          mcp: {
+            frontload: {
+              type: "local",
+              command: ["frontload", "mcp", "--repo", staleRepo],
+              enabled: true,
+              timeout: 20000,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    upgradeAll(repo, home);
+    const config = JSON.parse(
+      fs.readFileSync(path.join(repo, "opencode.json"), "utf8"),
+    );
+
+    expect(config.mcp.frontload.command).toEqual([
+      "frontload",
+      "mcp",
+      "--repo",
+      repo,
+    ]);
+  });
+
+  it("does not treat a non-frontload opencode mcp entry as managed", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-opencode-unmanaged-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-opencode-unmanaged-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, "opencode.json"),
+      JSON.stringify(
+        {
+          mcp: {
+            frontload: {
+              type: "remote",
+              url: "https://example.com/mcp",
+              enabled: true,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(
+      mcpConfigAdapters.opencode.hasFrontloadEntry(
+        path.join(repo, "opencode.json"),
+      ),
+    ).toBe(false);
+    const result = upgradeAll(repo, home);
+    expect(result.agents.map((agent) => agent.agent)).toEqual([]);
+  });
+
+  it("preserves disabled opencode entries during upgrade instead of force-enabling", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-opencode-disabled-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-opencode-disabled-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, "opencode.json"),
+      JSON.stringify(
+        {
+          mcp: {
+            frontload: {
+              type: "local",
+              command: ["frontload", "mcp", "--repo", "."],
+              enabled: false,
+              timeout: 20000,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    upgradeAll(repo, home);
+    const config = JSON.parse(
+      fs.readFileSync(path.join(repo, "opencode.json"), "utf8"),
+    );
+
+    expect(config.mcp.frontload.enabled).toBe(false);
+    expect(config.mcp.frontload.command).toEqual([
+      "frontload",
+      "mcp",
+      "--repo",
+      repo,
+    ]);
+  });
+
+  it("reads and writes opencode.jsonc config", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-opencode-jsonc-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-opencode-jsonc-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, "opencode.jsonc"),
+      `{
+  // team-shared config
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "existing": { "type": "remote", "url": "https://example.com/mcp" }
+  }
+}`,
+    );
+
+    initAll(repo, ["opencode"], home);
+    const configPath = path.join(repo, "opencode.jsonc");
+    const text = fs.readFileSync(configPath, "utf8");
+
+    expect(text).toContain("// team-shared config");
+    expect(text).toContain('"existing"');
+    const config = readJsonc<Record<string, unknown>>(configPath, {});
+    const mcp = config.mcp as Record<string, unknown>;
+    expect(mcp.frontload).toEqual({
+      type: "local",
+      command: ["frontload", "mcp", "--repo", repo],
+      enabled: true,
+      timeout: 20000,
+    });
+    expect(mcp.existing).toEqual({
+      type: "remote",
+      url: "https://example.com/mcp",
+    });
+  });
+
+  it("upgrades opencode.jsonc config", () => {
+    const repo = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-upgrade-opencode-jsonc-"),
+    );
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "frontload-home-upgrade-opencode-jsonc-"),
+    );
+    fs.writeFileSync(
+      path.join(repo, "opencode.jsonc"),
+      `{
+  // team config
+  "mcp": {
+    "frontload": {
+      "type": "local",
+      "command": ["frontload", "mcp", "--repo", "."],
+      "enabled": true
+    }
+  }
+}`,
+    );
+    const skillFile = path.join(
+      home,
+      ".config/opencode/skills/frontload/SKILL.md",
+    );
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(skillFile, "old skill\n");
+
+    upgradeAll(repo, home);
+    const text = fs.readFileSync(path.join(repo, "opencode.jsonc"), "utf8");
+
+    expect(text).toContain("// team config");
+    const config = readJsonc<Record<string, unknown>>(
+      path.join(repo, "opencode.jsonc"),
+      {},
+    );
+    const mcp = config.mcp as Record<string, unknown>;
+    expect((mcp.frontload as Record<string, unknown>).command).toEqual([
+      "frontload",
+      "mcp",
+      "--repo",
+      repo,
+    ]);
   });
 });

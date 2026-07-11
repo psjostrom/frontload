@@ -21,11 +21,12 @@ npx frontload init
 - `.frontload/`
 
 It also asks which agent integrations to configure. Choose Codex, Claude Code,
-both, or neither. For automation, use one of these:
+opencode, any combination, or none. For automation, use one of these:
 
 ```bash
 npx frontload init --agents codex
 npx frontload init --agents claude
+npx frontload init --agents opencode
 npx frontload init --agents all
 npx frontload init --agents none
 ```
@@ -257,6 +258,29 @@ Claude hooks can bound native reads, rewrite broad or configured shell commands,
 and bound noisy Grep/Glob output. The hooks apply only in repositories that
 contain `.frontload/`.
 
+### opencode
+
+```bash
+npx frontload init --agents opencode
+```
+
+Init writes the Frontload MCP entry to project `opencode.json` by default, or to
+`~/.config/opencode/opencode.json` with `--scope global`. If `opencode.jsonc`
+already exists, init writes to that instead and preserves comments. It also
+copies the Frontload skill to `~/.config/opencode/skills/frontload`.
+
+Restart opencode after init so it loads the MCP server and skill. opencode
+discovers the skill automatically from `~/.config/opencode/skills/`.
+
+Context savings come from the Frontload skill guiding the agent toward MCP
+tools and from the budgeted responses those tools return. opencode does not
+currently expose a declarative hook runtime that Frontload can configure through
+init; a JS plugin gate for automatic command rewriting and output bounding is
+planned as a follow-up.
+
+If your team shares `opencode.json` in git, either add it to `.gitignore` or use
+`--scope global`, since Frontload pins an absolute repo path in the MCP entry.
+
 ## Troubleshooting
 
 Run doctor from the initialized repo:
@@ -298,6 +322,7 @@ serves:
 
 - `codex`: writes a repo-specific `mcp_servers.frontload_<repo>_<hash>` entry into project `.codex/config.toml`, merges guarded Frontload PreToolUse and PostToolUse Bash hooks into `~/.codex/hooks.json`, and copies the Frontload skill to `~/.codex/skills/frontload`; open `/hooks` once to review and approve the hooks.
 - `claude`: merges `mcpServers.frontload` into project `.mcp.json` by default, or `~/.claude.json` with `--scope global`, writes Frontload PreToolUse and PostToolUse hooks to the matching Claude settings file, and copies the Frontload skill to `~/.claude/skills/frontload`.
+- `opencode`: writes `mcp.frontload` into project `opencode.json` (or existing `opencode.jsonc`) by default, or `~/.config/opencode/opencode.json` with `--scope global`, and copies the Frontload skill to `~/.config/opencode/skills/frontload`. No hooks are configured in this phase.
 
 If `frontload` is not already installed globally, `init` prompts before running
 `npm install -g frontload`. Use `--yes` to approve the global install prompt in
