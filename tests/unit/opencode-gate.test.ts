@@ -28,8 +28,8 @@ describe("opencode gate adapter", () => {
 
     await hooks["tool.execute.before"]({ tool: "bash" }, output);
 
-    expect(output.args.command).toContain("run --repo");
-    expect(output.args.command).toContain(`'${repo}'`);
+    expect(output.args.command).toContain("run --repo-from-cwd");
+    expect(output.args.command).not.toContain(`'${repo}'`);
     expect(output.args.command).toContain("--kind test -- pnpm test");
   });
 

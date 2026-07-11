@@ -18,6 +18,7 @@ import { compactRankedResults, generateDossier, searchIndexMeasured } from "../d
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
+import { runtimeRepoFromCwd } from "../gate/runtime.js";
 import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, needsShellForWindowsShim, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
@@ -88,6 +89,14 @@ function proofDisplayPath(repoRoot: string, filePath: string): string {
 
 const program = new Command();
 program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version(packageVersion);
+
+function repoFromCwdOption(): Option {
+  return new Option("--repo-from-cwd").hideHelp();
+}
+
+function commandRepoRoot(opts: { repo: string; repoFromCwd?: boolean }): string {
+  return opts.repoFromCwd ? runtimeRepoFromCwd() : resolveRepo(opts.repo);
+}
 
 function detectedAgents(homeDir: string): AgentName[] {
   return (["codex", "claude", "opencode"] as const).filter((agent) => mcpConfigAdapters[agent].detect(homeDir));
@@ -876,8 +885,8 @@ program.command("dossier").argument("<task>").option("--repo <repo>", "repositor
   print(measuredResult.output);
 });
 
-program.command("search").argument("<query>").option("--repo <repo>", "repository root", ".").option("--limit <n>", "10").action(async (query, opts) => {
-  const repoRoot = resolveRepo(opts.repo);
+program.command("search").argument("<query>").option("--repo <repo>", "repository root", ".").addOption(repoFromCwdOption()).option("--limit <n>", "10").action(async (query, opts) => {
+  const repoRoot = commandRepoRoot(opts);
   const config = loadConfig(repoRoot);
   const measuredResult = await measured(
     repoRoot,
@@ -895,12 +904,13 @@ program.command("search").argument("<query>").option("--repo <repo>", "repositor
 program.command("read")
   .argument("<path>")
   .option("--repo <repo>", "repository root", ".")
+  .addOption(repoFromCwdOption())
   .option("--budget <chars>", "target output characters", parsePositiveInteger, 4000)
   .option("--query <query>")
   .option("--start-line <line>", "1-based start line", parsePositiveInteger)
   .option("--line-count <count>", "maximum number of lines to return", parsePositiveInteger)
   .action(async (file, opts) => {
-    const repoRoot = resolveRepo(opts.repo);
+    const repoRoot = commandRepoRoot(opts);
     const config = loadConfig(repoRoot);
     const readOptions = {
       budgetChars: opts.budget as number,
@@ -922,8 +932,8 @@ program.command("read")
     print(measuredResult.output);
   });
 
-program.command("run").option("--repo <repo>", "repository root", ".").option("--kind <kind>", "generic").option("--allow-unconfigured").argument("[cmd...]", "command after --").allowUnknownOption(true).allowExcessArguments(true).action(async (cmdParts: string[], opts) => {
-  const repoRoot = resolveRepo(opts.repo);
+program.command("run").option("--repo <repo>", "repository root", ".").addOption(repoFromCwdOption()).option("--kind <kind>", "generic").option("--allow-unconfigured").argument("[cmd...]", "command after --").allowUnknownOption(true).allowExcessArguments(true).action(async (cmdParts: string[], opts) => {
+  const repoRoot = commandRepoRoot(opts);
   const parts = cmdParts;
   const measuredResult = await measured(
     repoRoot,

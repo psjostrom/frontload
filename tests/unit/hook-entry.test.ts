@@ -264,9 +264,12 @@ describe("hook entry adapters", () => {
     expect(await runPreToolUseHook("claude", payload)).not.toBeNull();
   });
 
-  it("uses only the selected host project directory when host environments conflict", async () => {
+  it("uses only the selected host project directory and generates a runtime repository command", async () => {
     const claudeRepo = initializedRepo();
     const codexRepo = initializedRepo();
+    fs.writeFileSync(path.join(claudeRepo, "frontload.config.json"), JSON.stringify({
+      gate: { enabled: false }
+    }));
     const previousClaude = process.env.CLAUDE_PROJECT_DIR;
     const previousCodex = process.env.CODEX_PROJECT_DIR;
     process.env.CLAUDE_PROJECT_DIR = claudeRepo;
@@ -278,12 +281,12 @@ describe("hook entry adapters", () => {
         tool_name: "Bash",
         tool_input: { command: "pnpm test" }
       });
-      const claude = JSON.parse((await runPreToolUseHook("claude", payload))!);
+      const claude = await runPreToolUseHook("claude", payload);
       const codex = JSON.parse((await runPreToolUseHook("codex", payload))!);
 
-      expect(claude.hookSpecificOutput.updatedInput.command).toContain(claudeRepo);
-      expect(claude.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
-      expect(codex.hookSpecificOutput.updatedInput.command).toContain(codexRepo);
+      expect(claude).toBeNull();
+      expect(codex.hookSpecificOutput.updatedInput.command).toContain("--repo-from-cwd");
+      expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
       expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(claudeRepo);
     } finally {
       if (previousClaude === undefined) delete process.env.CLAUDE_PROJECT_DIR;
@@ -293,9 +296,12 @@ describe("hook entry adapters", () => {
     }
   });
 
-  it("uses the tool cwd before host project directory when rewriting commands", async () => {
+  it("uses the tool cwd before host project directory and generates a runtime repository command", async () => {
     const toolRepo = initializedRepo();
     const codexRepo = initializedRepo();
+    fs.writeFileSync(path.join(codexRepo, "frontload.config.json"), JSON.stringify({
+      gate: { enabled: false }
+    }));
     const previousCodex = process.env.CODEX_PROJECT_DIR;
     process.env.CODEX_PROJECT_DIR = codexRepo;
 
@@ -306,7 +312,8 @@ describe("hook entry adapters", () => {
       });
       const codex = JSON.parse((await runPreToolUseHook("codex", payload))!);
 
-      expect(codex.hookSpecificOutput.updatedInput.command).toContain(toolRepo);
+      expect(codex.hookSpecificOutput.updatedInput.command).toContain("--repo-from-cwd");
+      expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(toolRepo);
       expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
     } finally {
       if (previousCodex === undefined) delete process.env.CODEX_PROJECT_DIR;
@@ -333,9 +340,12 @@ describe("hook entry adapters", () => {
     }
   });
 
-  it("uses the hook process cwd before host project directory when no tool cwd is provided", async () => {
+  it("uses the hook process cwd before host project directory and generates a runtime repository command", async () => {
     const toolRepo = initializedRepo();
     const codexRepo = initializedRepo();
+    fs.writeFileSync(path.join(codexRepo, "frontload.config.json"), JSON.stringify({
+      gate: { enabled: false }
+    }));
     const previousCodex = process.env.CODEX_PROJECT_DIR;
     const previousCwd = process.cwd();
     process.env.CODEX_PROJECT_DIR = codexRepo;
@@ -348,7 +358,8 @@ describe("hook entry adapters", () => {
       });
       const codex = JSON.parse((await runPreToolUseHook("codex", payload))!);
 
-      expect(codex.hookSpecificOutput.updatedInput.command).toContain(toolRepo);
+      expect(codex.hookSpecificOutput.updatedInput.command).toContain("--repo-from-cwd");
+      expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(toolRepo);
       expect(codex.hookSpecificOutput.updatedInput.command).not.toContain(codexRepo);
     } finally {
       process.chdir(previousCwd);
