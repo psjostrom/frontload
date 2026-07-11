@@ -780,6 +780,10 @@ describe("installer", () => {
     expect(
       needsShellForWindowsShim("/usr/local/bin/frontload.cmd", "linux"),
     ).toBe(false);
+    expect(needsShellForWindowsShim("frontload", "win32")).toBe(true);
+    expect(needsShellForWindowsShim("npm", "win32")).toBe(true);
+    expect(needsShellForWindowsShim("node", "win32")).toBe(true);
+    expect(needsShellForWindowsShim("frontload", "darwin")).toBe(false);
   });
 
   it("looks past temporary npx shims when checking for global installs", () => {

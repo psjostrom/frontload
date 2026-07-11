@@ -937,7 +937,10 @@ program.command("proof").option("--repo <repo>", "repository root", ".").action(
   const proofDir = path.join(stateRoot, "proof");
   const pnpmVersion = (() => {
     try {
-      return execFileSync("pnpm", ["--version"], { encoding: "utf8" }).trim();
+      return execFileSync("pnpm", ["--version"], {
+        encoding: "utf8",
+        ...(needsShellForWindowsShim("pnpm") ? { shell: true } : {})
+      }).trim();
     } catch {
       return "unavailable";
     }

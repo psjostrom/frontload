@@ -915,6 +915,24 @@ describe("e2e proof workflow", () => {
     expect(succeeding.exitCode).toBe(0);
   });
 
+  it("exits with 1 when the wrapped command is killed by timeout", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-run-timeout-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      commands: { allowed: ["node hang.js"], timeoutMs: 300 }
+    }));
+    fs.writeFileSync(path.join(repo, "hang.js"), "setTimeout(() => {}, 60000);\n");
+
+    const result = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "run", "--repo", repo, "--kind", "test", "--", "node", "hang.js"
+    ], { reject: false });
+
+    expect(result.exitCode).toBe(1);
+    const data = JSON.parse(result.stdout);
+    expect(data.exitCode).toBeNull();
+    expect(data.signal).toBeTruthy();
+  });
+
   it("reports invalid read line options as CLI validation errors", async () => {
     const result = await execa(
       process.execPath,
