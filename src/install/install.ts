@@ -60,7 +60,7 @@ export type McpConfigAdapter = {
   hasFrontloadEntry(configPath: string): boolean;
 };
 
-type InstallRunner = (command: string, args: string[], options: { stdio: "inherit" }) => unknown;
+type InstallRunner = (command: string, args: string[], options: { stdio: "inherit"; shell?: boolean }) => unknown;
 type VersionGetter = (packageManager: PackageManager) => string | undefined;
 type JsonObject = Record<string, unknown>;
 
@@ -505,6 +505,12 @@ function isEphemeralPackagePath(value: string): boolean {
   return normalized.includes("/_npx/") || normalized.includes("/dlx-") || normalized.includes("/.pnpm/dlx/") || normalized.includes("/node_modules/.bin/");
 }
 
+export function needsShellForWindowsShim(executable: string, platform: string = process.platform): boolean {
+  if (platform !== "win32") return false;
+  if (path.extname(executable)) return /\.(cmd|bat)$/i.test(executable);
+  return true;
+}
+
 export function resolveGlobalExecutable(bin = "frontload", envPath = process.env.PATH ?? ""): string | undefined {
   return findExecutablesOnPath(bin, envPath).find((executable) => !isEphemeralPackagePath(executable));
 }
@@ -543,7 +549,8 @@ function getLatestVersion(packageManager: PackageManager = "npm"): string | unde
     const result = execFileSync(packageManager, ["view", "frontload", "version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 5000
+      timeout: 5000,
+      ...(needsShellForWindowsShim(packageManager) ? { shell: true } : {})
     });
     return result.trim();
   } catch {
@@ -562,7 +569,7 @@ export function installGlobalFrontload(packageManager: PackageManager = "npm", r
     };
   }
   try {
-    runner(install.command, install.args, { stdio: "inherit" });
+    runner(install.command, install.args, { stdio: "inherit", ...(needsShellForWindowsShim(install.command) ? { shell: true } : {}) });
     if (!isGloballyInstalled()) {
       return {
         action: "manual",
@@ -607,7 +614,7 @@ if (wasInstalled && latestVersion && currentVersion === latestVersion) {
   }
 
   try {
-    runner(install.command, install.args, { stdio: "inherit" });
+    runner(install.command, install.args, { stdio: "inherit", ...(needsShellForWindowsShim(install.command) ? { shell: true } : {}) });
     if (!isGloballyInstalled()) {
       return {
         action: "manual",

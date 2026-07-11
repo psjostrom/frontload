@@ -184,6 +184,9 @@ frontload run --repo . --kind lint -- pnpm lint
 The full raw log is stored under `.frontload/logs/`. The agent sees a compact
 summary with exit code, duration, preserved failures, and the log path.
 
+`frontload run` propagates the wrapped command's exit code to the Frontload
+process, so CI, shell scripts, and command chaining see the real failure.
+
 When package-manager or framework output points at common setup races, the
 summary includes a targeted hint. For example, pnpm's
 `ERR_PNPM_IGNORED_BUILDS` explains that dependency build scripts were blocked
@@ -410,7 +413,8 @@ frontload run --repo . --kind lint -- pnpm lint
 ```
 
 Runs a configured or discovered command and summarizes output. Kinds are
-`test`, `typecheck`, `lint`, or `generic`.
+`test`, `typecheck`, `lint`, or `generic`. The process exit code mirrors the
+wrapped command's exit code.
 
 ### `diff`
 

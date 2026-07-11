@@ -889,6 +889,50 @@ describe("e2e proof workflow", () => {
     expect(data.summary).toContain('["--","--runInBand"]');
   });
 
+  it("propagates wrapped command exit code to the frontload process", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-run-exit-code-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      commands: { allowed: ["node fail.js", "node ok.js"] }
+    }));
+    fs.writeFileSync(path.join(repo, "fail.js"), "console.error('boom'); process.exit(3);\n");
+    fs.writeFileSync(path.join(repo, "ok.js"), "console.log('ok');\n");
+
+    const failing = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "run", "--repo", repo, "--kind", "test", "--", "node", "fail.js"
+    ], { reject: false });
+    const failingData = JSON.parse(failing.stdout);
+    expect(failingData.exitCode).toBe(3);
+    expect(failing.exitCode).toBe(3);
+    expect(failingData.findings.length).toBeGreaterThan(0);
+
+    const succeeding = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "run", "--repo", repo, "--kind", "generic", "--", "node", "ok.js"
+    ]);
+    const succeedingData = JSON.parse(succeeding.stdout);
+    expect(succeedingData.exitCode).toBe(0);
+    expect(succeeding.exitCode).toBe(0);
+  });
+
+  it("exits with 1 when the wrapped command is killed by timeout", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-run-timeout-"));
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      commands: { allowed: ["node hang.js"], timeoutMs: 300 }
+    }));
+    fs.writeFileSync(path.join(repo, "hang.js"), "setTimeout(() => {}, 60000);\n");
+
+    const result = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "run", "--repo", repo, "--kind", "test", "--", "node", "hang.js"
+    ], { reject: false });
+
+    expect(result.exitCode).toBe(1);
+    const data = JSON.parse(result.stdout);
+    expect(data.exitCode).toBeNull();
+    expect(data.signal).toBeTruthy();
+  });
+
   it("reports invalid read line options as CLI validation errors", async () => {
     const result = await execa(
       process.execPath,
