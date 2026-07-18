@@ -60,7 +60,7 @@ describe("plugin packages", () => {
     }
   });
 
-  it("ships only paused agent guidance", () => {
+  it("ships only indefinitely halted agent guidance", () => {
     const skillFiles = [
       path.resolve("skills/frontload/SKILL.md"),
       ...["codex", "claude", "opencode"].map((host) =>
@@ -69,7 +69,8 @@ describe("plugin packages", () => {
     ];
     for (const skillFile of skillFiles) {
       const text = fs.readFileSync(skillFile, "utf8");
-      expect(text).toContain("integration is paused");
+      expect(text).toContain("integration is halted indefinitely");
+      expect(text).toContain("https://github.com/rtk-ai/rtk");
       expect(text).not.toMatch(/\bfl_[a-z_]+/);
     }
     const codex = JSON.parse(fs.readFileSync(
@@ -80,10 +81,10 @@ describe("plugin packages", () => {
       path.join(pluginRoot, "claude/.claude-plugin/plugin.json"),
       "utf8"
     ));
-    expect(codex.description).toMatch(/paused/i);
+    expect(codex.description).toMatch(/halted indefinitely/i);
     expect(codex.interface.capabilities).toEqual([]);
     expect(codex.interface.defaultPrompt).toBeUndefined();
-    expect(claude.description).toMatch(/paused/i);
+    expect(claude.description).toMatch(/halted indefinitely/i);
   });
 
   it("rejects a bundled hook file while integrations are paused", () => {

@@ -60,20 +60,23 @@ describe("config", () => {
     expect(gate.rewriteCommands).toBe(true);
   });
 
-  it("keeps the primary README as a short evidence-based pause notice", () => {
+  it("keeps the primary README as a short evidence-based indefinite halt notice", () => {
     const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
     expect(readme.length).toBeLessThan(1500);
+    expect(readme).toContain("halted indefinitely");
     expect(readme).toContain("+59.96%");
     expect(readme).toContain("+31.85%");
     expect(readme).toContain("Codex");
     expect(readme).toContain("Claude Code");
     expect(readme).toContain("OpenCode");
+    expect(readme).toContain("https://github.com/rtk-ai/rtk");
     expect(readme).toContain("proof/codex-net-benefit-audit.md");
+    expect(readme).not.toMatch(/development resumes/i);
     expect(readme).not.toContain("npx frontload init");
     expect(readme).not.toContain("fl_repo_dossier");
   });
 
-  it("does not advertise active setup in maintained documentation", () => {
+  it("marks maintained documentation as halted indefinitely", () => {
     for (const file of [
       "AGENTS.md",
       "docs/architecture.md",
@@ -82,7 +85,7 @@ describe("config", () => {
       "docs/troubleshooting.md"
     ]) {
       const text = fs.readFileSync(path.resolve(file), "utf8");
-      expect(text).toMatch(/paused/i);
+      expect(text).toMatch(/halted indefinitely/i);
       expect(text).not.toContain("npx frontload init");
       expect(text).not.toContain("fl_repo_dossier");
     }

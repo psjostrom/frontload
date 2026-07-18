@@ -740,7 +740,7 @@ describe("e2e proof workflow", () => {
       responds: false,
       legacyGlobalConflict: true
     });
-    expect(data.checks.codex.probeError).toContain("agent integrations are paused");
+    expect(data.checks.codex.probeError).toContain("agent integrations are halted indefinitely");
     expect(data.checks.mcpServer).toBe(false);
     expect(data.checks.agentIntegrations).toEqual({
       paused: true,
@@ -812,7 +812,7 @@ describe("e2e proof workflow", () => {
       launches: false,
       responds: false
     });
-    expect(data.checks.codex.probeError).toContain("agent integrations are paused");
+    expect(data.checks.codex.probeError).toContain("agent integrations are halted indefinitely");
     expect(data.checks.installedCommand).toMatchObject({
       command: "frontload",
       available: true,
@@ -873,7 +873,7 @@ describe("e2e proof workflow", () => {
         timeout: 2000
       });
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("agent integrations are paused");
+      expect(result.stderr).toContain("agent integrations are halted indefinitely");
     }
 
     expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(false);
@@ -1471,7 +1471,7 @@ describe("e2e proof workflow", () => {
       launches: false,
       responds: false
     });
-    expect(data.checks.dogfood.codex.probeError).toContain("agent integrations are paused");
+    expect(data.checks.dogfood.codex.probeError).toContain("agent integrations are halted indefinitely");
   });
 
   it("keeps plain doctor independent from dogfood validation", async () => {

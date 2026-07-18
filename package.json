@@ -1,7 +1,7 @@
 {
   "name": "frontload",
   "version": "0.3.1",
-  "description": "Paused agent-integration experiment; not recommended for use.",
+  "description": "Agent integrations halted indefinitely; use RTK instead.",
   "type": "module",
   "packageManager": "pnpm@10.14.0",
   "bin": {

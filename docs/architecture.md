@@ -1,5 +1,6 @@
-# Architecture — paused
+# Architecture — halted indefinitely
 
-Frontload's agent architecture is paused after a negative Codex net-benefit
-audit. The retained source is dormant material for a separately gated rewrite.
-See `proof/codex-net-benefit-audit.md`.
+Frontload's agent architecture is halted indefinitely after a negative Codex
+net-benefit audit. The retained source is historical evidence, not a rewrite
+starting point. Use [RTK](https://github.com/rtk-ai/rtk) instead. See
+`proof/codex-net-benefit-audit.md`.

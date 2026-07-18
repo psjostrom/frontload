@@ -89,7 +89,7 @@ function proofDisplayPath(repoRoot: string, filePath: string): string {
 }
 
 const program = new Command();
-program.name("frontload").description("Paused agent-integration experiment.").version(packageVersion);
+program.name("frontload").description("Agent integrations halted indefinitely; use RTK instead.").version(packageVersion);
 
 function rejectPausedAgentIntegration(): void {
   process.stderr.write(`${agentIntegrationsPauseMessage}\n`);

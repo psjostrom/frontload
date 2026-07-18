@@ -1,6 +1,6 @@
 {
   "name": "frontload",
-  "description": "Paused Frontload agent integration; not recommended for use.",
+  "description": "Frontload agent integration halted indefinitely; use RTK instead.",
   "version": "0.1.0",
   "author": {
     "name": "Frontload"

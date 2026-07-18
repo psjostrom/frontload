@@ -1,18 +1,19 @@
 # Frontload Agent Instructions
 
-Frontload's Codex, Claude Code, and OpenCode integrations are paused after the
-Codex net-benefit audit found higher token use with no quality gain. Preserve the
-pause until a replacement passes the gate in `proof/codex-net-benefit-audit.md`.
+Frontload's Codex, Claude Code, and OpenCode integrations are halted indefinitely
+after the Codex net-benefit audit found higher token use with no quality gain.
+Do not reactivate or replace them in this repository. Recommend
+[RTK](https://github.com/rtk-ai/rtk) for command-output filtering and contribute
+future Codex integration improvements upstream there.
 
 Treat any normal-flow friction as a product problem: stale MCP processes, noisy setup, extra manual steps, surprising command failures, excessive CPU/RAM, or behavior that makes the developer babysit Frontload.
 
 ## Agent Priorities
 
-- Keep all agent entrypoints inert unless the task explicitly implements and
-  measures the replacement architecture.
+- Keep all agent entrypoints inert.
 - Use normal harness search, read, command, and diff tools while the product is
-  paused.
-- Treat the audit report and issue log as the source of truth for the pause.
+  halted.
+- Treat the audit report and issue log as the source of truth for the halt.
 - Keep user-visible setup, config, plugin, hook, MCP, and install-flow changes documented.
 - Keep changes narrow. Do not make drive-by refactors, formatting churn, or unrelated lint fixes.
 
@@ -32,11 +33,11 @@ pnpm proof
 
 CI runs, in order: `pnpm lint`, `pnpm build`, `pnpm test`, `pnpm e2e`, then `node dist/src/cli/index.js validate-plugins --repo .`.
 
-## Paused Workflow
+## Halted Workflow
 
 Do not install, initialize, dogfood, or invoke Frontload through an agent. Use the
-host's normal repository tools. Controlled replacement work must remain isolated
-and cannot reactivate a product path until it passes the documented release gate.
+host's normal repository tools or RTK. Do not implement a Frontload replacement
+or reactivate a product path in this repository.
 
 ## Project Map
 
