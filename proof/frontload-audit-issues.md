@@ -332,6 +332,42 @@ Suspected causes are explicitly labeled as hypotheses.
 - Likely component: Release and uninstall lifecycle. Frontload has no way for a
   repository revision to revoke already loaded global configuration or processes.
 
+## FL-AUD-013 — Required verification commands fall outside the gate and summaries lose completion output
+
+- Severity: High, normal-flow reliability and token overhead
+- Context: Running the repository's documented shutdown-branch verification
+  through the still-loaded Frontload integration.
+- Expected: Frontload should run the repository's required validation commands
+  and return a bounded, truthful completion result without an extra tool turn.
+- Observed: The command gate rejected both
+  `node dist/src/cli/index.js validate-plugins --repo .` and `pnpm proof` as
+  "Command is not allowed." The summarized `pnpm e2e` call later completed and
+  wrote a successful 41-pass/17-skip log, but its asynchronous completion yielded
+  no usable result to the agent. Verification required raw-command and direct-log
+  fallbacks. During follow-on RTK research, larger read-only inspection output was
+  repeatedly surfaced as a script error solely because Frontload truncated it,
+  again requiring smaller fallback reads.
+- Reproduction:
+  1. Use the loaded Frontload 0.3.1 command-summary integration in this worktree.
+  2. Submit each required command above through the Frontload summary path.
+  3. For `pnpm e2e`, wait for the asynchronous result after the command completes.
+  4. Compare the missing completion response with the successful full log.
+- Frequency: Both nonstandard required verification commands were rejected; the
+  observed async e2e completion failed once; output-limit script errors recurred
+  during larger source inspections.
+- Impact: At least three avoidable fallback tool turns during final verification,
+  plus repeated source-read retries. The integration increases context and latency
+  precisely when it is expected to reduce them, and an empty completion can make
+  a successful verification look unknown.
+- Workaround: Run the required commands directly, read the saved full log, and
+  manually split source inspection into smaller commands.
+- Evidence: Successful e2e output is retained at
+  `.frontload/logs/2026-07-18T13-23-36-589Z-test.log`; the command rejections,
+  empty completion, and truncation failures are retained in the shutdown task
+  transcript.
+- Likely component: Default `allowedCommands` coverage, asynchronous result
+  delivery, and output-limit handling in the command-summary path.
+
 ## Non-Frontload constraints intentionally excluded
 
 - The OpenAI Codex manual helper rejected a response missing its integrity header.
