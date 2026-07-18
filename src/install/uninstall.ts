@@ -64,8 +64,27 @@ function withoutFrontloadHooks(group: unknown): unknown | null {
   return hooks.length > 0 ? { ...group, hooks } : null;
 }
 
+function resolveExistingWithinBoundary(target: string, boundary: string): { target: string; boundary: string } | null {
+  if (!fs.existsSync(target) || !fs.existsSync(boundary)) return null;
+  try {
+    const absoluteTarget = path.resolve(target);
+    const absoluteBoundary = path.resolve(boundary);
+    const lexicalRelative = path.relative(absoluteBoundary, absoluteTarget);
+    if (lexicalRelative === ".." || lexicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(lexicalRelative)) return null;
+    const resolvedTarget = fs.realpathSync.native(target);
+    const resolvedBoundary = fs.realpathSync.native(boundary);
+    if (resolvedTarget !== path.resolve(resolvedBoundary, lexicalRelative)) return null;
+    return { target: resolvedTarget, boundary: resolvedBoundary };
+  } catch {
+    return null;
+  }
+}
+
 function removeFrontloadHooks(file: string, boundary: string): boolean {
-  if (!fs.existsSync(file)) return false;
+  const resolved = resolveExistingWithinBoundary(file, boundary);
+  if (!resolved) return false;
+  file = resolved.target;
+  boundary = resolved.boundary;
   const currentText = fs.readFileSync(file, "utf8");
   const current = JSON.parse(currentText) as JsonObject;
   if (!isJsonObject(current.hooks)) return false;
@@ -94,9 +113,10 @@ function removeFrontloadHooks(file: string, boundary: string): boolean {
 }
 
 function removeEmptyParents(start: string, boundary: string): void {
-  let dir = start;
-  const relative = path.relative(boundary, dir);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return;
+  const resolved = resolveExistingWithinBoundary(start, boundary);
+  if (!resolved) return;
+  let dir = resolved.target;
+  boundary = resolved.boundary;
   while (dir !== boundary && fs.existsSync(dir) && fs.statSync(dir).isDirectory() && fs.readdirSync(dir).length === 0) {
     fs.rmdirSync(dir);
     dir = path.dirname(dir);
@@ -104,7 +124,10 @@ function removeEmptyParents(start: string, boundary: string): void {
 }
 
 function removePath(target: string, boundary: string): boolean {
-  if (!fs.existsSync(target)) return false;
+  const resolved = resolveExistingWithinBoundary(target, boundary);
+  if (!resolved) return false;
+  target = resolved.target;
+  boundary = resolved.boundary;
   fs.rmSync(target, { recursive: true, force: true });
   removeEmptyParents(path.dirname(target), boundary);
   return true;
@@ -129,7 +152,11 @@ function bundledRelativePaths(sourceDir: string): { files: string[]; directories
 }
 
 function removeBundledFiles(sourceDir: string, targetDir: string, boundary: string): boolean {
-  if (!fs.existsSync(sourceDir) || !fs.existsSync(targetDir)) return false;
+  if (!fs.existsSync(sourceDir)) return false;
+  const resolved = resolveExistingWithinBoundary(targetDir, boundary);
+  if (!resolved) return false;
+  targetDir = resolved.target;
+  boundary = resolved.boundary;
   const targetStats = fs.lstatSync(targetDir);
   if (!targetStats.isDirectory() || targetStats.isSymbolicLink()) return false;
   const realTargetDir = fs.realpathSync.native(targetDir);
@@ -160,14 +187,21 @@ function removeBundledFiles(sourceDir: string, targetDir: string, boundary: stri
 }
 
 function removeFile(target: string, boundary: string): boolean {
-  if (!fs.existsSync(target) || fs.lstatSync(target).isDirectory()) return false;
+  const resolved = resolveExistingWithinBoundary(target, boundary);
+  if (!resolved) return false;
+  target = resolved.target;
+  boundary = resolved.boundary;
+  if (fs.lstatSync(target).isDirectory()) return false;
   fs.rmSync(target, { force: true });
   removeEmptyParents(path.dirname(target), boundary);
   return true;
 }
 
 function cleanupEmptyConfig(file: string, boundary: string): void {
-  if (!fs.existsSync(file)) return;
+  const resolved = resolveExistingWithinBoundary(file, boundary);
+  if (!resolved) return;
+  file = resolved.target;
+  boundary = resolved.boundary;
   const text = fs.readFileSync(file, "utf8");
   if (!text.trim()) {
     fs.rmSync(file);
@@ -299,11 +333,13 @@ function hasManagedMcpEntry(agent: AgentName, parsed: unknown): boolean {
 function removeMcpConfig(records: RemovalRecord[], agent: AgentName, configPath: string | null, boundary: string): void {
   if (!configPath) return;
   recordAction(records, "agent", configPath, () => {
-    const parsed = validateMcpConfig(agent, configPath);
+    const resolved = resolveExistingWithinBoundary(configPath, boundary);
+    if (!resolved) return false;
+    const parsed = validateMcpConfig(agent, resolved.target);
     const removed = agent === "codex"
-      ? removeManagedCodexMcp(configPath, parsed)
-      : hasManagedMcpEntry(agent, parsed) && mcpConfigAdapters[agent].remove(configPath);
-    if (removed) cleanupEmptyConfig(configPath, boundary);
+      ? removeManagedCodexMcp(resolved.target, parsed)
+      : hasManagedMcpEntry(agent, parsed) && mcpConfigAdapters[agent].remove(resolved.target);
+    if (removed) cleanupEmptyConfig(resolved.target, resolved.boundary);
     return removed;
   });
 }
@@ -366,7 +402,6 @@ export function globalUninstallCommands(packageManager: PackageManager = detectP
 }
 
 function packageRemovalWasAbsent(error: unknown): boolean {
-  if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return true;
   const detail = typeof error === "object" && error !== null
     ? ["message", "stderr", "stdout"]
       .map((key) => key in error ? String((error as Record<string, unknown>)[key]) : "")

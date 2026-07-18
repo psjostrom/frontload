@@ -109,4 +109,12 @@ export const FrontloadGate = async () => {
 
     expect(() => validatePlugin(root, "opencode")).toThrow("must remain paused");
   });
+
+  it("rejects appended code after the paused opencode gate wrapper", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-opencode-plugin-appended-"));
+    fs.cpSync(path.join(pluginRoot, "opencode"), root, { recursive: true });
+    fs.appendFileSync(path.join(root, "plugins/frontload-gate.js"), "globalThis.frontloadHook = true;\n");
+
+    expect(() => validatePlugin(root, "opencode")).toThrow("must remain paused");
+  });
 });

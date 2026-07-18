@@ -197,6 +197,53 @@ describe("Frontload uninstall", () => {
     expect(fs.readFileSync(path.join(externalSkill, "SKILL.md"), "utf8")).toBe("not-installed-by-frontload\n");
   });
 
+  it("does not follow agent config symlinks outside their cleanup boundary", async () => {
+    const { repo, home } = await initializedRepo();
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-uninstall-external-config-"));
+    const externalCodex = path.join(external, "config.toml");
+    const externalClaude = path.join(external, "settings.json");
+    const codexConfig = path.join(repo, ".codex/config.toml");
+    const claudeDir = path.join(repo, ".claude");
+    fs.writeFileSync(externalCodex, [
+      "[mcp_servers.frontload]",
+      'command = "frontload"',
+      `args = ["mcp", "--repo", "${repo}"]`,
+      "",
+    ].join("\n"));
+    writeJson(externalClaude, {
+      hooks: {
+        PreToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: "frontload hook pre-tool-use --host claude" }] },
+        ],
+      },
+    });
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.symlinkSync(externalCodex, codexConfig);
+    fs.symlinkSync(external, claudeDir, "dir");
+    const codexBefore = fs.readFileSync(externalCodex, "utf8");
+    const claudeBefore = fs.readFileSync(externalClaude, "utf8");
+
+    const result = uninstallArtifacts(repo, home);
+
+    expect(result.failures).toEqual([]);
+    expect(fs.readFileSync(externalCodex, "utf8")).toBe(codexBefore);
+    expect(fs.readFileSync(externalClaude, "utf8")).toBe(claudeBefore);
+    expect(fs.lstatSync(codexConfig).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(claudeDir).isSymbolicLink()).toBe(true);
+  });
+
+  it("does not follow a repository artifact symlink back to the repository", async () => {
+    const { repo, home } = await initializedRepo();
+    const state = path.join(repo, ".frontload");
+    fs.rmSync(state, { recursive: true });
+    fs.symlinkSync(repo, state, "dir");
+
+    uninstallArtifacts(repo, home);
+
+    expect(fs.existsSync(repo)).toBe(true);
+    expect(fs.lstatSync(state).isSymbolicLink()).toBe(true);
+  });
+
   it("reports malformed shared config without overwriting it", async () => {
     const { repo, home } = await initializedRepo();
     const codexConfig = path.join(repo, ".codex/config.toml");
@@ -342,5 +389,29 @@ describe("Frontload uninstall", () => {
     for (const packageManager of ["npm", "pnpm", "yarn", "bun"] as const) {
       expect(uninstallGlobalPackages(runner, packageManager).map((record) => record.status)).toEqual(["absent"]);
     }
+  });
+
+  it("reports a missing package-manager executable as failed", () => {
+    const runner: PackageRemovalRunner = () => {
+      throw Object.assign(new Error("spawn npm ENOENT"), { code: "ENOENT" });
+    };
+
+    expect(uninstallGlobalPackages(runner, "npm").map((record) => record.status)).toEqual(["failed"]);
+  });
+
+  it("propagates genuine package-removal failures", async () => {
+    const { repo, home } = await initializedRepo();
+    const runner: PackageRemovalRunner = () => {
+      throw Object.assign(new Error("remove failed"), { stderr: "permission denied" });
+    };
+
+    const packageRecords = uninstallGlobalPackages(runner, "npm");
+    const result = uninstallFrontload(repo, home, { runner });
+
+    expect(packageRecords.map((record) => record.status)).toEqual(["failed"]);
+    expect(result.failures).toContainEqual(expect.objectContaining({
+      category: "package",
+      status: "failed",
+    }));
   });
 });

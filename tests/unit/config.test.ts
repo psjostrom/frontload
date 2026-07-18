@@ -85,12 +85,17 @@ describe("config", () => {
       "docs/architecture.md",
       "docs/codex-setup.md",
       "docs/mcp-tools.md",
+      "docs/security.md",
       "docs/troubleshooting.md"
     ]) {
       const text = fs.readFileSync(path.resolve(file), "utf8");
       expect(text).toMatch(/halted indefinitely/i);
       expect(text).not.toContain("npx frontload init");
       expect(text).not.toContain("fl_repo_dossier");
+    }
+
+    for (const file of ["docs/mcp-tools.md", "docs/security.md"]) {
+      expect(fs.readFileSync(path.resolve(file), "utf8")).toMatch(/updated or uninstalled/i);
     }
   });
 });

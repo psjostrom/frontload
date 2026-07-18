@@ -70,8 +70,5 @@ export const FrontloadGate = async () => ({});
 }
 
 export function isGeneratedOpencodeGateWrapper(text: string): boolean {
-  return text.startsWith("// Frontload agent integration is paused.\n")
-    && text.includes("export const FrontloadGate = async () => ({});")
-    && !text.includes("loadAdapter")
-    && !text.includes("import(");
+  return text === opencodeGatePluginWrapper(null);
 }
