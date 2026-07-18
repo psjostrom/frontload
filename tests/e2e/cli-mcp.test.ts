@@ -9,8 +9,10 @@ import { appendEvent, budgetReport, readEvents } from "../../src/budget/events.j
 import { searchResultsOutput } from "../../src/budget/output-bounds.js";
 import { compactRankedResults, searchIndexMeasured } from "../../src/dossier/dossier.js";
 import { createMcpHandlers } from "../../src/mcp/server.js";
+import { agentIntegrationsPaused } from "../../src/product/status.js";
 
 const fixture = path.resolve("fixtures/react-ts-app");
+const activeIntegrationIt = agentIntegrationsPaused ? it.skip : it;
 
 function sanitizeProofSummary(summary: string, extraPaths: string[] = []): string {
   let sanitized = summary.split(fixture).join("<fixture-repo>").split(os.homedir()).join("<home>");
@@ -119,7 +121,6 @@ const dogfoodFingerprintFiles = [
   "dist/src/install/install.js",
   "dist/src/mcp/server.js",
   "plugins/codex/skills/frontload/SKILL.md",
-  "plugins/codex/hooks/hooks.json",
   "frontload.config.example.json"
 ];
 
@@ -215,7 +216,7 @@ describe("e2e proof workflow", () => {
     expect(fs.existsSync("proof/sample-dossier.md")).toBe(false);
   });
 
-  it("runs host-aware hook subcommands through the built CLI", async () => {
+  activeIntegrationIt("runs host-aware hook subcommands through the built CLI", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-cli-"));
     fs.mkdirSync(path.join(repo, ".frontload"));
     fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
@@ -249,7 +250,7 @@ describe("e2e proof workflow", () => {
     expect(JSON.parse(post.stdout)).toMatchObject({ decision: "block" });
   });
 
-  it("runs a rewritten command in its linked worktree when the hook payload omits workdir", async () => {
+  activeIntegrationIt("runs a rewritten command in its linked worktree when the hook payload omits workdir", async () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-hook-worktree-"));
     const repo = path.join(parent, "repo");
     const worktree = path.join(parent, "worktree");
@@ -315,7 +316,7 @@ describe("e2e proof workflow", () => {
     });
   });
 
-  it("exits the stdio MCP process after the client closes", async () => {
+  activeIntegrationIt("exits the stdio MCP process after the client closes", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-exit-"));
     fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}");
     const cli = path.resolve("dist/src/cli/index.js");
@@ -706,7 +707,7 @@ describe("e2e proof workflow", () => {
     expect(data).toMatchObject({ truncated: true });
   });
 
-  it("reports project Codex MCP health and legacy global conflicts in doctor", async () => {
+  it("reports configured Codex integration as paused without launching it", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-codex-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-home-"));
     const cli = path.resolve("dist/src/cli/index.js");
@@ -735,11 +736,16 @@ describe("e2e proof workflow", () => {
       serverName: "frontload_doctor_codex_12345678",
       configScope: "project",
       repoMatches: true,
-      launches: true,
-      responds: true,
+      launches: false,
+      responds: false,
       legacyGlobalConflict: true
     });
-    expect(data.checks.codex.restartAdvice).toContain("Transport closed");
+    expect(data.checks.codex.probeError).toContain("agent integrations are paused");
+    expect(data.checks.mcpServer).toBe(false);
+    expect(data.checks.agentIntegrations).toEqual({
+      paused: true,
+      report: "proof/codex-net-benefit-audit.md"
+    });
   });
 
   it("does not execute unmanaged Codex MCP commands during doctor", async () => {
@@ -772,7 +778,7 @@ describe("e2e proof workflow", () => {
     });
   });
 
-  it("treats a successful bounded policy probe as responsive without recording budget events", async () => {
+  it("does not probe a managed Codex MCP command while integrations are paused", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-home-"));
     const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-low-cap-bin-"));
@@ -803,9 +809,10 @@ describe("e2e proof workflow", () => {
 
     expect(data.checks.codex).toMatchObject({
       configured: true,
-      launches: true,
-      responds: true
+      launches: false,
+      responds: false
     });
+    expect(data.checks.codex.probeError).toContain("agent integrations are paused");
     expect(data.checks.installedCommand).toMatchObject({
       command: "frontload",
       available: true,
@@ -817,7 +824,7 @@ describe("e2e proof workflow", () => {
     expect(readEvents(repo).filter((event) => event.operation === "policy")).toEqual([]);
   });
 
-  it("advertises expected Frontload MCP tools over stdio", async () => {
+  activeIntegrationIt("advertises expected Frontload MCP tools over stdio", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-tools-"));
     const cli = path.resolve("dist/src/cli/index.js");
     fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}");
@@ -888,9 +895,34 @@ describe("e2e proof workflow", () => {
       ], { input: payload });
       expect(hook.stdout).toBe("");
     }
+
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), JSON.stringify({
+      budgets: { maxToolOutputChars: 200 }
+    }));
+    fs.mkdirSync(path.join(repo, ".frontload"));
+    const packagedHooks = [
+      {
+        file: "dist/hooks/pre-tool-use.js",
+        input: payload
+      },
+      {
+        file: "dist/hooks/post-tool-use.js",
+        input: JSON.stringify({
+          cwd: repo,
+          tool_name: "Bash",
+          tool_response: "x".repeat(1000)
+        })
+      }
+    ];
+    for (const hook of packagedHooks) {
+      const result = await execa(process.execPath, [path.resolve(hook.file)], {
+        input: hook.input
+      });
+      expect(result.stdout).toBe("");
+    }
   });
 
-  it("creates project-local Codex MCP config from the built init command", async () => {
+  activeIntegrationIt("creates project-local Codex MCP config from the built init command", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-codex-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-home-"));
     const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-bin-"));
@@ -908,7 +940,7 @@ describe("e2e proof workflow", () => {
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(true);
   });
 
-  it("reports invalid init options instead of treating them as prompt cancellation", async () => {
+  activeIntegrationIt("reports invalid init options instead of treating them as prompt cancellation", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-invalid-"));
     const cli = path.resolve("dist/src/cli/index.js");
 
@@ -939,7 +971,7 @@ describe("e2e proof workflow", () => {
     expect(invalidScope.stdout).not.toContain("Frontload init was cancelled");
   });
 
-  const ttyIt = process.platform === "win32" ? it.skip : it;
+  const ttyIt = process.platform === "win32" || agentIntegrationsPaused ? it.skip : it;
 
   ttyIt("uses the interactive Claude scope radio selection when initializing global config", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-claude-"));
@@ -1163,7 +1195,7 @@ describe("e2e proof workflow", () => {
     expect(result.stderr).not.toContain("TypeError");
   });
 
-  it("does not refresh agent config when non-interactive upgrade lacks approval", async () => {
+  activeIntegrationIt("does not refresh agent config when non-interactive upgrade lacks approval", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-manual-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-home-manual-"));
     const codexConfig = path.join(home, ".codex/config.toml");
@@ -1190,7 +1222,7 @@ describe("e2e proof workflow", () => {
     expect(fs.existsSync(path.join(home, ".codex/hooks.json"))).toBe(false);
   });
 
-  it("prints human-friendly init output instead of raw JSON", async () => {
+  activeIntegrationIt("prints human-friendly init output instead of raw JSON", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-init-cli-output-"));
     const result = await execa(
       process.execPath,
@@ -1205,7 +1237,7 @@ describe("e2e proof workflow", () => {
     expect(result.stdout).not.toContain("\"repoRoot\"");
   });
 
-  it("delegates upgrade refresh to the installed frontload binary", async () => {
+  activeIntegrationIt("delegates upgrade refresh to the installed frontload binary", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-reexec-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-home-reexec-"));
     const bin = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-bin-"));
@@ -1247,7 +1279,7 @@ describe("e2e proof workflow", () => {
     ]);
   });
 
-  it("refreshes existing agent config through the CLI refresh-only path", async () => {
+  activeIntegrationIt("refreshes existing agent config through the CLI refresh-only path", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-refresh-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-upgrade-cli-home-refresh-"));
     const codexConfig = path.join(home, ".codex/config.toml");
@@ -1343,7 +1375,7 @@ describe("e2e proof workflow", () => {
     expect(fs.existsSync(transcriptPath)).toBe(true);
   });
 
-  it("serves registered MCP tools over stdio", async () => {
+  activeIntegrationIt("serves registered MCP tools over stdio", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-stdio-"));
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -1371,7 +1403,7 @@ describe("e2e proof workflow", () => {
     }
   });
 
-  it("exits the MCP server when stdio closes", async () => {
+  activeIntegrationIt("exits the MCP server when stdio closes", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-mcp-stdin-close-"));
     const child = execa(process.execPath, [path.resolve("dist/src/cli/index.js"), "mcp", "--repo", repo], {
       stdin: "pipe",
@@ -1388,7 +1420,7 @@ describe("e2e proof workflow", () => {
     expect(result.timedOut).toBe(false);
   });
 
-  it("doctor verifies the regular installed Codex dogfood path", async () => {
+  it("doctor rejects the regular installed Codex dogfood path while paused", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-dogfood-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-home-"));
     const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-bin-"));
@@ -1412,12 +1444,14 @@ describe("e2e proof workflow", () => {
         env: {
           ...process.env,
           PATH: bin
-        }
+        },
+        reject: false
       }
     );
     const data = JSON.parse(result.stdout);
 
-    expect(data.checks.dogfood.ok).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(data.checks.dogfood.ok).toBe(false);
     expect(data.checks.dogfood.installedCommand).toMatchObject({
       available: true,
       version: pkg.version,
@@ -1433,8 +1467,11 @@ describe("e2e proof workflow", () => {
       startsMcp: true,
       enabledForUse: true,
       repoIsAbsolute: true,
-      repoMatches: true
+      repoMatches: true,
+      launches: false,
+      responds: false
     });
+    expect(data.checks.dogfood.codex.probeError).toContain("agent integrations are paused");
   });
 
   it("keeps plain doctor independent from dogfood validation", async () => {
@@ -1492,7 +1529,7 @@ describe("e2e proof workflow", () => {
     expect(data.summary).not.toContain("untracked");
   });
 
-  it("formats upgrade refresh-only output instead of emitting raw JSON", async () => {
+  activeIntegrationIt("formats upgrade refresh-only output instead of emitting raw JSON", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-upgrade-cli-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-upgrade-cli-home-"));
     const codexConfig = path.join(home, ".codex/config.toml");

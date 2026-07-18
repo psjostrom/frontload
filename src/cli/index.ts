@@ -22,7 +22,7 @@ import { runtimeRepoFromCwd } from "../gate/runtime.js";
 import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, needsShellForWindowsShim, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
-import { agentIntegrationsPaused, agentIntegrationsPauseMessage } from "../product/status.js";
+import { agentIntegrationsPaused, agentIntegrationsPauseMessage, agentIntegrationsReportPath } from "../product/status.js";
 import { BaselineKind } from "../types.js";
 import { ensureStateDir, resolveRepo, stateDir, stateExcludeStatus } from "../utils/path.js";
 import { readJsonc } from "../utils/jsonc.js";
@@ -435,7 +435,6 @@ const dogfoodFingerprintFiles = [
   "dist/src/install/install.js",
   "dist/src/mcp/server.js",
   "plugins/codex/skills/frontload/SKILL.md",
-  "plugins/codex/hooks/hooks.json",
   "frontload.config.example.json"
 ];
 
@@ -706,7 +705,7 @@ async function probeCodexMcp(check: CodexDogfoodCheck): Promise<CodexDogfoodChec
   }
 }
 
-async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<CodexDogfoodCheck> {
+function configuredCodexCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck {
   const projectPath = mcpConfigAdapters.codex.projectPath(repoRoot);
   const globalPath = mcpConfigAdapters.codex.globalPath(homeDir);
   const globalCheck = globalPath
@@ -721,7 +720,20 @@ async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<Cod
     : globalCheck.configured
       ? { ...globalCheck, legacyGlobalConflict }
       : emptyCodexCheck(projectPath ?? globalPath ?? "", "none", legacyGlobalConflict);
-  return probeCodexMcp(active);
+  return active;
+}
+
+async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<CodexDogfoodCheck> {
+  return probeCodexMcp(configuredCodexCheck(repoRoot, homeDir));
+}
+
+function pausedCodexCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck {
+  return {
+    ...configuredCodexCheck(repoRoot, homeDir),
+    launches: false,
+    responds: false,
+    probeError: agentIntegrationsPauseMessage
+  };
 }
 
 async function dogfoodCheck(repoRoot: string, homeDir: string, codex?: CodexDogfoodCheck) {
@@ -842,7 +854,9 @@ program.command("doctor")
   .action(async (opts) => {
     const repoRoot = resolveRepo(opts.repo);
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
-    const codex = await codexDogfoodCheck(repoRoot, homeDir);
+    const codex = agentIntegrationsPaused
+      ? pausedCodexCheck(repoRoot, homeDir)
+      : await codexDogfoodCheck(repoRoot, homeDir);
     const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir, codex) : undefined;
     const beforeStateExclude = stateExcludeStatus(repoRoot);
     const checks = {
@@ -861,7 +875,11 @@ program.command("doctor")
           repaired: !beforeStateExclude.ignored && after.ignored
         };
       })(),
-      mcpServer: true,
+      mcpServer: !agentIntegrationsPaused,
+      agentIntegrations: {
+        paused: agentIntegrationsPaused,
+        report: agentIntegrationsReportPath
+      },
       installedCommand: installedFrontloadCheck(repoRoot),
       codex,
       opencode: opencodeConfigCheck(repoRoot, homeDir),

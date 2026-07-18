@@ -303,6 +303,35 @@ Suspected causes are explicitly labeled as hypotheses.
   while Codex already bounds many raw reads and command outputs. Payload
   compression does not usually repay the extra turns.
 
+## FL-AUD-012 — Pausing the repository does not stop an already loaded installation
+
+- Severity: High, rollout and normal-flow reliability
+- Context: Implementing the paused product revision in a linked worktree while
+  the current Codex task still had Frontload 0.3.1 loaded from an earlier init.
+- Expected: A paused release should not leave developers believing the active
+  integration has stopped when a stale hook or MCP process is still running.
+- Observed: Commands in the pause worktree continued to be rewritten and
+  summarized by the previously installed Frontload hook. For example, the full
+  unit run returned a Frontload command-summary envelope and wrote a Frontload
+  log even though the source revision under test had disabled agent entrypoints.
+  The already loaded MCP process also remained attached to the original checkout,
+  as recorded in FL-AUD-008. Source changes alone cannot alter either process.
+- Reproduction: Initialize Frontload 0.3.1 in Codex, keep the task open, switch
+  to the paused revision without installing it, and run a normally rewriteable
+  command such as `pnpm test`.
+- Frequency: Deterministic for the current task until the installed package and
+  loaded agent configuration are replaced or removed.
+- Impact: The developer can keep paying the token and reliability cost of the
+  product after seeing the repository marked paused. It also obscures verification
+  output while working on the pause itself.
+- Workaround: Install the paused revision or remove the existing Frontload agent
+  configuration, then restart the agent so stale hooks and MCP processes exit.
+- Evidence: The pause-worktree unit run at
+  `.frontload/logs/2026-07-18T09-49-10-456Z-test.log`; current-task MCP behavior
+  recorded in FL-AUD-008.
+- Likely component: Release and uninstall lifecycle. Frontload has no way for a
+  repository revision to revoke already loaded global configuration or processes.
+
 ## Non-Frontload constraints intentionally excluded
 
 - The OpenAI Codex manual helper rejected a response missing its integrity header.
