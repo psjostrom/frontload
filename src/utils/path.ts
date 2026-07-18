@@ -34,6 +34,21 @@ function ensureStateDirIgnored(repoRoot: string): void {
   fs.appendFileSync(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}.frontload/\n`);
 }
 
+export function removeStateDirIgnore(repoRoot: string): boolean {
+  const exclude = gitExcludePath(repoRoot);
+  if (!exclude || !fs.existsSync(exclude)) return false;
+  const current = fs.readFileSync(exclude, "utf8");
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  const hadTrailingNewline = current.endsWith("\n");
+  const lines = current.split(/\r?\n/);
+  const filtered = lines.filter((line) => line !== ".frontload/");
+  if (filtered.length === lines.length) return false;
+  let next = filtered.join(eol);
+  if (hadTrailingNewline && !next.endsWith(eol)) next += eol;
+  fs.writeFileSync(exclude, next);
+  return true;
+}
+
 export function stateExcludeStatus(repoRoot: string): { ignored: boolean; mechanism: ".git/info/exclude"; pattern: ".frontload/"; path: string | null } {
   const exclude = gitExcludePath(repoRoot);
   const ignored = exclude && fs.existsSync(exclude)

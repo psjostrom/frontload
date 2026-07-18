@@ -17,11 +17,13 @@ import { runSummary } from "../commands/run.js";
 import { compactRankedResults, generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
-import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
+import { parseHookHost, readStdin, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
 import { runtimeRepoFromCwd } from "../gate/runtime.js";
 import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, needsShellForWindowsShim, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { uninstallFrontload } from "../install/uninstall.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
+import { agentIntegrationsPaused, agentIntegrationsPauseMessage, agentIntegrationsReportPath } from "../product/status.js";
 import { BaselineKind } from "../types.js";
 import { ensureStateDir, resolveRepo, stateDir, stateExcludeStatus } from "../utils/path.js";
 import { readJsonc } from "../utils/jsonc.js";
@@ -30,6 +32,7 @@ import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPro
 import { formatInitOutput, formatUpgradeOutput } from "./init-output.js";
 import { parsePositiveInteger } from "./options.js";
 import { applyConfigScopeRadioKey, createConfigScopeRadioState, formatConfigScopeRadioPrompt, selectedConfigScope, type ConfigScopeRadioState } from "./prompts.js";
+import { formatUninstallOutput } from "./uninstall-output.js";
 
 type ResultMeasurement<T> = {
   output: (result: T) => unknown;
@@ -88,7 +91,12 @@ function proofDisplayPath(repoRoot: string, filePath: string): string {
 }
 
 const program = new Command();
-program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version(packageVersion);
+program.name("frontload").description("Agent integrations halted indefinitely; use RTK instead.").version(packageVersion);
+
+function rejectPausedAgentIntegration(): void {
+  process.stderr.write(`${agentIntegrationsPauseMessage}\n`);
+  process.exitCode = 1;
+}
 
 function repoFromCwdOption(): Option {
   return new Option("--repo-from-cwd").hideHelp();
@@ -429,7 +437,6 @@ const dogfoodFingerprintFiles = [
   "dist/src/install/install.js",
   "dist/src/mcp/server.js",
   "plugins/codex/skills/frontload/SKILL.md",
-  "plugins/codex/hooks/hooks.json",
   "frontload.config.example.json"
 ];
 
@@ -700,7 +707,7 @@ async function probeCodexMcp(check: CodexDogfoodCheck): Promise<CodexDogfoodChec
   }
 }
 
-async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<CodexDogfoodCheck> {
+function configuredCodexCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck {
   const projectPath = mcpConfigAdapters.codex.projectPath(repoRoot);
   const globalPath = mcpConfigAdapters.codex.globalPath(homeDir);
   const globalCheck = globalPath
@@ -715,7 +722,20 @@ async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<Cod
     : globalCheck.configured
       ? { ...globalCheck, legacyGlobalConflict }
       : emptyCodexCheck(projectPath ?? globalPath ?? "", "none", legacyGlobalConflict);
-  return probeCodexMcp(active);
+  return active;
+}
+
+async function codexDogfoodCheck(repoRoot: string, homeDir: string): Promise<CodexDogfoodCheck> {
+  return probeCodexMcp(configuredCodexCheck(repoRoot, homeDir));
+}
+
+function pausedCodexCheck(repoRoot: string, homeDir: string): CodexDogfoodCheck {
+  return {
+    ...configuredCodexCheck(repoRoot, homeDir),
+    launches: false,
+    responds: false,
+    probeError: agentIntegrationsPauseMessage
+  };
 }
 
 async function dogfoodCheck(repoRoot: string, homeDir: string, codex?: CodexDogfoodCheck) {
@@ -748,6 +768,10 @@ program
   .option("--force")
   .option("--yes", "approve installing frontload globally if needed")
   .action(async (opts) => {
+    if (agentIntegrationsPaused) {
+      rejectPausedAgentIntegration();
+      return;
+    }
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     let agents: ReturnType<typeof parseAgents>;
     if (opts.agents === undefined) {
@@ -794,6 +818,10 @@ program
   .addOption(new Option("--global-install-action <action>").hideHelp())
   .addOption(new Option("--global-install-command <command>").hideHelp())
   .action(async (opts) => {
+    if (agentIntegrationsPaused) {
+      rejectPausedAgentIntegration();
+      return;
+    }
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     const repoRoot = resolveRepo(opts.repo);
     if (opts.refreshOnly) {
@@ -821,6 +849,20 @@ program
     execFileSync("frontload", refreshArgs(repoRoot, homeDir, globalInstall), { stdio: "inherit" });
   });
 
+program.command("uninstall")
+  .option("--repo <repo>", "repository root", ".")
+  .option("--home <dir>", "home directory for agent configuration cleanup")
+  .option("--keep-package", "remove initialized artifacts but keep the global package")
+  .action((opts) => {
+    const result = uninstallFrontload(
+      resolveRepo(opts.repo),
+      opts.home ? path.resolve(opts.home) : os.homedir(),
+      { keepPackage: !!opts.keepPackage },
+    );
+    process.stdout.write(formatUninstallOutput(result));
+    if (result.failures.length > 0) process.exitCode = 1;
+  });
+
 program.command("doctor")
   .option("--repo <repo>", "repository root", ".")
   .option("--home <dir>", "home directory for agent configuration checks")
@@ -828,7 +870,9 @@ program.command("doctor")
   .action(async (opts) => {
     const repoRoot = resolveRepo(opts.repo);
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
-    const codex = await codexDogfoodCheck(repoRoot, homeDir);
+    const codex = agentIntegrationsPaused
+      ? pausedCodexCheck(repoRoot, homeDir)
+      : await codexDogfoodCheck(repoRoot, homeDir);
     const dogfood = opts.dogfood ? await dogfoodCheck(repoRoot, homeDir, codex) : undefined;
     const beforeStateExclude = stateExcludeStatus(repoRoot);
     const checks = {
@@ -847,7 +891,11 @@ program.command("doctor")
           repaired: !beforeStateExclude.ignored && after.ignored
         };
       })(),
-      mcpServer: true,
+      mcpServer: !agentIntegrationsPaused,
+      agentIntegrations: {
+        paused: agentIntegrationsPaused,
+        report: agentIntegrationsReportPath
+      },
       installedCommand: installedFrontloadCheck(repoRoot),
       codex,
       opencode: opencodeConfigCheck(repoRoot, homeDir),
@@ -979,14 +1027,30 @@ program.command("budget").option("--repo <repo>", "repository root", ".").action
 program.command("validate-plugins").option("--repo <repo>", "repository root", ".").action((opts) => print(validateBundledPlugins(resolveRepo(opts.repo))));
 const hook = program.command("hook");
 hook.command("pre-tool-use").requiredOption("--host <host>").action(async (opts) => {
-  const output = await runPreToolUseHook(parseHookHost(opts.host));
+  const host = parseHookHost(opts.host);
+  if (agentIntegrationsPaused) {
+    await readStdin();
+    return;
+  }
+  const output = await runPreToolUseHook(host);
   if (output) process.stdout.write(output);
 });
 hook.command("post-tool-use").requiredOption("--host <host>").action(async (opts) => {
-  const output = await runPostToolUseHook(parseHookHost(opts.host));
+  const host = parseHookHost(opts.host);
+  if (agentIntegrationsPaused) {
+    await readStdin();
+    return;
+  }
+  const output = await runPostToolUseHook(host);
   if (output) process.stdout.write(output);
 });
-program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => startMcp(resolveRepo(opts.repo)));
+program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => {
+  if (agentIntegrationsPaused) {
+    rejectPausedAgentIntegration();
+    return;
+  }
+  return startMcp(resolveRepo(opts.repo));
+});
 program.command("proof").option("--repo <repo>", "repository root", ".").action((opts) => {
   const repoRoot = resolveRepo(opts.repo);
   const stateRoot = ensureStateDir(repoRoot);

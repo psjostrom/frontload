@@ -3,6 +3,10 @@
 Frontload is local-first. It does not upload source code, call paid LLM APIs, or
 make runtime network calls.
 
-Command execution is allowlisted by `frontload.config.json` unless `--allow-unconfigured` is passed. Raw command logs are written under `.frontload/logs/`; Frontload adds `.frontload/` to the repository's local `.git/info/exclude` when it creates generated state. Output summaries redact obvious tokens, API keys, secrets, and passwords with simple pattern matching.
-
-Hooks can deny broad context dumps and rewrite test/typecheck/lint commands through `frontload run`.
+Historical Frontload runs stored raw command logs under `.frontload/logs/` and
+redacted obvious tokens, API keys, secrets, and passwords with simple pattern
+matching. Development is halted indefinitely, and all agent hooks, MCP servers,
+and command-rewrite paths are inert in the updated release. Older installations
+remain active until updated or uninstalled. Use `frontload uninstall` to remove
+generated state and installed integration files while preserving unrelated
+agent configuration.

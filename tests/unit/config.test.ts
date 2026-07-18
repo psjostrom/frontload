@@ -60,10 +60,42 @@ describe("config", () => {
     expect(gate.rewriteCommands).toBe(true);
   });
 
-  it("documents hook controls in the primary README configuration example", () => {
+  it("keeps the primary README as a short evidence-based indefinite halt notice", () => {
     const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
-    expect(readme).toContain("controls indexing, budgets, command allowlists, security");
-    expect(readme).toContain("hook enforcement");
-    expect(readme).toContain('"maxReadLines": 200');
+    expect(readme.length).toBeLessThan(1500);
+    expect(readme).toContain("halted indefinitely");
+    expect(readme).toContain("+59.96%");
+    expect(readme).toContain("+31.85%");
+    expect(readme).toContain("Codex");
+    expect(readme).toContain("Claude Code");
+    expect(readme).toContain("OpenCode");
+    expect(readme).toContain("https://github.com/rtk-ai/rtk");
+    expect(readme).toContain("proof/codex-net-benefit-audit.md");
+    expect(readme).toContain("frontload uninstall");
+    expect(readme).toContain("--keep-package");
+    expect(readme).toMatch(/each initialized repository/i);
+    expect(readme).not.toMatch(/development resumes/i);
+    expect(readme).not.toContain("npx frontload init");
+    expect(readme).not.toContain("fl_repo_dossier");
+  });
+
+  it("marks maintained documentation as halted indefinitely", () => {
+    for (const file of [
+      "AGENTS.md",
+      "docs/architecture.md",
+      "docs/codex-setup.md",
+      "docs/mcp-tools.md",
+      "docs/security.md",
+      "docs/troubleshooting.md"
+    ]) {
+      const text = fs.readFileSync(path.resolve(file), "utf8");
+      expect(text).toMatch(/halted indefinitely/i);
+      expect(text).not.toContain("npx frontload init");
+      expect(text).not.toContain("fl_repo_dossier");
+    }
+
+    for (const file of ["docs/mcp-tools.md", "docs/security.md"]) {
+      expect(fs.readFileSync(path.resolve(file), "utf8")).toMatch(/updated or uninstalled/i);
+    }
   });
 });

@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { hookConfigFor, type HookHost } from "../hooks/definitions.js";
 import { isGeneratedOpencodeGateWrapper } from "./opencode-gate-wrapper.js";
 
 const authorSchema = z.object({
@@ -45,27 +44,6 @@ const claudePluginSchema = z.object({
   license: z.string().min(1).optional()
 }).strict();
 
-const hooksConfigSchema = z.object({
-  hooks: z.record(
-    z.array(
-      z.object({
-        matcher: z.string().optional(),
-        hooks: z.array(
-          z.object({
-            type: z.literal("command"),
-            command: z.string().min(1),
-            args: z.array(z.string()).optional(),
-            timeout: z.number().positive().optional(),
-            statusMessage: z.string().optional()
-          }).passthrough()
-        )
-      }).passthrough()
-    )
-  )
-});
-
-type HooksConfig = z.infer<typeof hooksConfigSchema>;
-
 export type PluginValidationResult = {
   summary: string;
   root: string;
@@ -92,25 +70,10 @@ function assertSkill(file: string): void {
   if (body.length < 40) throw new Error(`Skill body is too short: ${file}`);
 }
 
-function assertFrontloadHook(config: HooksConfig, host: HookHost, file: string): void {
-  const expected = hookConfigFor(host).hooks;
-  for (const event of ["PreToolUse", "PostToolUse"] as const) {
-    const expectedGroup = expected[event][0];
-    const expectedHook = expectedGroup.hooks[0];
-    const found = (config.hooks[event] ?? []).some((group) =>
-      group.matcher === expectedGroup.matcher &&
-      group.hooks.some((hook) => JSON.stringify(hook) === JSON.stringify(expectedHook))
-    );
-    if (!found) {
-      throw new Error(`${file} must define the ${host} Frontload ${event} hook command`);
-    }
-  }
-}
-
 function assertOpencodeGatePlugin(file: string): void {
   const text = fs.readFileSync(file, "utf8");
   if (!isGeneratedOpencodeGateWrapper(text)) {
-    throw new Error(`${file} must delegate to the shared OpenCode adapter`);
+    throw new Error(`${file} must remain paused`);
   }
 }
 
@@ -134,8 +97,7 @@ export function validatePlugin(root: string, host: "codex" | "claude" | "opencod
   }
 
   if (fs.existsSync(hooksFile)) {
-    assertFile(hooksFile, "hooks config", checked);
-    assertFrontloadHook(hooksConfigSchema.parse(readJson(hooksFile)), host as HookHost, hooksFile);
+    throw new Error(`${hooksFile} must not ship hooks while paused`);
   }
   if (host === "opencode") {
     const pluginFile = path.join(absRoot, "plugins/frontload-gate.js");

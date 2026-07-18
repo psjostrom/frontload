@@ -1,14 +1,19 @@
 # Frontload Agent Instructions
 
-Frontload exists to make initialized AI coding harnesses behave, from the developer's perspective, just like they did before: same ability, same workflow, fewer tokens, and ideally faster responses. After `frontload init`, developers should not need to think about Frontload in normal use. If an agent needs less context, it should get that efficiency without becoming less capable.
+Frontload's Codex, Claude Code, and OpenCode integrations are halted indefinitely
+after the Codex net-benefit audit found higher token use with no quality gain.
+Do not reactivate or replace them in this repository. Recommend
+[RTK](https://github.com/rtk-ai/rtk) for command-output filtering and contribute
+future Codex integration improvements upstream there.
 
 Treat any normal-flow friction as a product problem: stale MCP processes, noisy setup, extra manual steps, surprising command failures, excessive CPU/RAM, or behavior that makes the developer babysit Frontload.
 
 ## Agent Priorities
 
-- Preserve harness behavior first. Frontload should be an invisible context and cost gateway, not a new workflow users must manage.
-- Reduce token use without reducing agent judgment. Use dossiers, search, budgeted reads, summarized command output, and diff summaries, but fetch more context when correctness requires it.
-- Prefer real integration behavior over mocked internals. The value is that agents can work normally in real repositories with less context.
+- Keep all agent entrypoints inert.
+- Use normal harness search, read, command, and diff tools while the product is
+  halted.
+- Treat the audit report and issue log as the source of truth for the halt.
 - Keep user-visible setup, config, plugin, hook, MCP, and install-flow changes documented.
 - Keep changes narrow. Do not make drive-by refactors, formatting churn, or unrelated lint fixes.
 
@@ -28,35 +33,11 @@ pnpm proof
 
 CI runs, in order: `pnpm lint`, `pnpm build`, `pnpm test`, `pnpm e2e`, then `node dist/src/cli/index.js validate-plugins --repo .`.
 
-## Frontload Workflow
+## Halted Workflow
 
-This repo dogfoods Frontload through the normal user install and init path. Always dogfood Frontload code from the latest `origin/main` commit or newer: fetch `origin/main`, confirm the current branch is equal to or descended from it, then build, pack, install, and initialize the package like a user would.
-
-```bash
-pnpm build
-mkdir -p .frontload/dogfood
-rm -f .frontload/dogfood/frontload-*.tgz
-npm pack --pack-destination .frontload/dogfood
-npm install -g .frontload/dogfood/frontload-*.tgz
-frontload init --repo . --agents codex --force
-frontload doctor --repo . --dogfood
-```
-
-Restart Codex after `frontload init` so MCP configuration is reloaded. Do not dogfood an older global `frontload` install in this repo.
-
-Before broad exploration, call `fl_repo_dossier` when the Frontload MCP tools are available. Treat Frontload tool failures, timeouts, stale MCP processes, or excessive CPU/RAM during Frontload development as product bugs to investigate, not as ordinary workflow noise.
-
-Prefer:
-
-- `fl_search` over broad grep
-- `fl_read_budgeted` over raw full-file reads
-- `fl_run_summary` over raw test/typecheck commands
-- `fl_git_diff_summary` over raw full diff dumps
-- `fl_budget_report` before and after large tasks
-
-Do not read unrelated files unless the dossier suggests them or you explain why. Do not run more than two repair loops on the same failure without checking `fl_budget_report` and narrowing the task context.
-
-When tests fail, pass only the summarized failure back into reasoning unless the full log is truly needed.
+Do not install, initialize, dogfood, or invoke Frontload through an agent. Use the
+host's normal repository tools or RTK. Do not implement a Frontload replacement
+or reactivate a product path in this repository.
 
 ## Project Map
 

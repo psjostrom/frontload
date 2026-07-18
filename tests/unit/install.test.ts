@@ -23,11 +23,10 @@ function expectedOpencodeAdapterUrl(): string {
 }
 
 function expectGeneratedOpencodeGateWrapper(text: string): void {
-  expect(text).toContain("FrontloadGate");
-  expect(text).toContain(JSON.stringify(expectedOpencodeAdapterUrl()));
-  expect(text).not.toContain("src/gate/gate.js");
-  expect(text).not.toContain("npm root -g");
-  expect(text).not.toContain("function loadConfig");
+  expect(text).toBe(opencodeGatePluginWrapper(expectedOpencodeAdapterUrl()));
+  expect(text).toContain("async () => ({})");
+  expect(text).not.toContain("loadAdapter");
+  expect(text).not.toContain("import(");
 }
 
 function writeFakeFrontloadPackage(parent: string): { root: string; binDir: string; adapterUrl: string } {
@@ -453,7 +452,7 @@ expect(
     expect(preferredOpencodeGateAdapterUrl(ephemeralRoot, globalPackage.binDir)).toBe(globalPackage.adapterUrl);
   });
 
-  it("generates an executable opencode gate wrapper from the shared template", async () => {
+  it("generates an inert opencode gate wrapper from the shared template", async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-opencode-wrapper-exec-"));
     const globalPackage = writeFakeFrontloadPackage(temp);
     const pluginFile = path.join(temp, "frontload-gate.mjs");
@@ -461,10 +460,7 @@ expect(
 
     const plugin = await import(`${pathToFileURL(pluginFile).href}?wrapper-exec`);
     const hooks = await plugin.FrontloadGate({ directory: temp });
-    const output = { args: { command: "pnpm test" } };
-    await hooks["tool.execute.before"]({ tool: "bash" }, output);
-
-    expect(output.args.command).toBe("fake global adapter");
+    expect(hooks).toEqual({});
   });
 
   it("can configure opencode globally", () => {

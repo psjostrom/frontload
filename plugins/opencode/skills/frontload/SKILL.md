@@ -1,26 +1,11 @@
 ---
 name: frontload
-description: Use when working in a code repository to reduce context cost with Frontload MCP tools, task dossiers, budgeted reads, summarized command output, and token-cost reports.
+description: Frontload's agent integration is halted indefinitely. Do not initialize or use its tools.
 ---
 
-# Frontload
+# Frontload — halted indefinitely
 
-Use Frontload before broad repository exploration.
-
-opencode registers MCP server tools with the server name as a prefix, so the
-Frontload MCP server (named `frontload`) exposes tools as `frontload_fl_*`.
-
-Default workflow:
-
-1. Start with `frontload_fl_repo_dossier` for the current task.
-2. Use `frontload_fl_search` when the dossier says ranking confidence is noisy or when you need concrete symbols.
-3. Use `frontload_fl_read_budgeted` for contiguous file windows instead of raw full-file reads. Prefer the raw `excerpt` for edits when `editSafe` is true, and use `numberedExcerpt` only for line references when it is present.
-4. Run tests, typechecks, lint, and build commands through `frontload_fl_run_summary`.
-5. Use `frontload_fl_git_diff_summary` before reviewing changes.
-6. Use `frontload_fl_budget_report` before repeating repair loops.
-
-Do not ask the user to run `frontload index` before normal work; `frontload_fl_repo_dossier` and `frontload_fl_search` build or refresh the index automatically.
-
-Avoid raw `find .`, `ls -R`, broad recursive grep, full lockfile dumps, generated fixture dumps, and unwrapped test commands.
-
-If the MCP server is unavailable but the `frontload` CLI works, use these fallbacks: `frontload dossier "<task>"`, `frontload search "<query>"`, `frontload read <path> --budget <chars>`, `frontload run --kind <kind> -- <command>`, `frontload diff`, and `frontload budget`. Ask the user to run `frontload doctor` and restart opencode so MCP configuration is reloaded. If `frontload --version` is not available in their shell, ask them to run `npx frontload init` again or install the package globally. For a local source checkout, build Frontload with `pnpm build` and reload the plugin.
+The Frontload agent integration is halted indefinitely after a negative Codex
+net-benefit audit. Do not invoke or fall back to Frontload. Use
+[RTK](https://github.com/rtk-ai/rtk) or OpenCode's normal repository tools. See
+the root README in the Frontload repository.

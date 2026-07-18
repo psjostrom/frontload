@@ -1,6 +1,6 @@
 {
   "name": "frontload",
-  "description": "Local-first context and cost controls for coding agents.",
+  "description": "Frontload agent integration halted indefinitely; use RTK instead.",
   "version": "0.1.0",
   "author": {
     "name": "Frontload"
