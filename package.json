@@ -1,7 +1,7 @@
 {
   "name": "frontload",
   "version": "0.3.1",
-  "description": "Local-first context and cost gateway for AI coding agents.",
+  "description": "Paused agent-integration experiment; not recommended for use.",
   "type": "module",
   "packageManager": "pnpm@10.14.0",
   "bin": {

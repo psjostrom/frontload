@@ -60,10 +60,31 @@ describe("config", () => {
     expect(gate.rewriteCommands).toBe(true);
   });
 
-  it("documents hook controls in the primary README configuration example", () => {
+  it("keeps the primary README as a short evidence-based pause notice", () => {
     const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
-    expect(readme).toContain("controls indexing, budgets, command allowlists, security");
-    expect(readme).toContain("hook enforcement");
-    expect(readme).toContain('"maxReadLines": 200');
+    expect(readme.length).toBeLessThan(1500);
+    expect(readme).toContain("+59.96%");
+    expect(readme).toContain("+31.85%");
+    expect(readme).toContain("Codex");
+    expect(readme).toContain("Claude Code");
+    expect(readme).toContain("OpenCode");
+    expect(readme).toContain("proof/codex-net-benefit-audit.md");
+    expect(readme).not.toContain("npx frontload init");
+    expect(readme).not.toContain("fl_repo_dossier");
+  });
+
+  it("does not advertise active setup in maintained documentation", () => {
+    for (const file of [
+      "AGENTS.md",
+      "docs/architecture.md",
+      "docs/codex-setup.md",
+      "docs/mcp-tools.md",
+      "docs/troubleshooting.md"
+    ]) {
+      const text = fs.readFileSync(path.resolve(file), "utf8");
+      expect(text).toMatch(/paused/i);
+      expect(text).not.toContain("npx frontload init");
+      expect(text).not.toContain("fl_repo_dossier");
+    }
   });
 });

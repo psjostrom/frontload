@@ -1,7 +1,7 @@
 {
   "name": "frontload",
   "version": "0.1.0",
-  "description": "Local-first context and cost controls for coding agents.",
+  "description": "Paused Frontload agent integration; not recommended for use.",
   "author": {
     "name": "Frontload"
   },
@@ -12,19 +12,14 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Frontload",
-    "shortDescription": "Reduce coding-agent context waste with dossiers, budgeted reads, and summarized logs.",
-    "longDescription": "Frontload gives Codex a local MCP server for repo indexing, task dossiers, budgeted file reads, command summaries, diff summaries, and token-cost reports.",
+    "shortDescription": "Paused after a negative Codex net-benefit audit.",
+    "longDescription": "Frontload's Codex integration is disabled while its architecture is reconsidered.",
     "developerName": "Frontload",
     "category": "Productivity",
-    "capabilities": ["MCP", "Context", "Code"],
+    "capabilities": [],
     "websiteURL": "https://github.com/psjostrom/frontload",
     "privacyPolicyURL": "https://github.com/psjostrom/frontload",
     "termsOfServiceURL": "https://github.com/psjostrom/frontload",
-    "defaultPrompt": [
-      "Use Frontload for this coding task.",
-      "Create a task dossier before reading files.",
-      "Compare the token cost of this change."
-    ],
     "brandColor": "#2563EB"
   }
 }

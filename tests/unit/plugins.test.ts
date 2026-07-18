@@ -60,6 +60,32 @@ describe("plugin packages", () => {
     }
   });
 
+  it("ships only paused agent guidance", () => {
+    const skillFiles = [
+      path.resolve("skills/frontload/SKILL.md"),
+      ...["codex", "claude", "opencode"].map((host) =>
+        path.join(pluginRoot, host, "skills/frontload/SKILL.md")
+      )
+    ];
+    for (const skillFile of skillFiles) {
+      const text = fs.readFileSync(skillFile, "utf8");
+      expect(text).toContain("integration is paused");
+      expect(text).not.toMatch(/\bfl_[a-z_]+/);
+    }
+    const codex = JSON.parse(fs.readFileSync(
+      path.join(pluginRoot, "codex/.codex-plugin/plugin.json"),
+      "utf8"
+    ));
+    const claude = JSON.parse(fs.readFileSync(
+      path.join(pluginRoot, "claude/.claude-plugin/plugin.json"),
+      "utf8"
+    ));
+    expect(codex.description).toMatch(/paused/i);
+    expect(codex.interface.capabilities).toEqual([]);
+    expect(codex.interface.defaultPrompt).toBeUndefined();
+    expect(claude.description).toMatch(/paused/i);
+  });
+
   it("rejects a bundled hook file while integrations are paused", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-plugin-validator-"));
     fs.cpSync(path.join(pluginRoot, "codex"), root, { recursive: true });
