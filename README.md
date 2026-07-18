@@ -19,5 +19,17 @@ revision blocks setup and MCP startup; packaged hooks and plugins are inert. The
 repository remains available as an evidence and audit archive, not as an active
 product.
 
+## Remove existing installations
+
+Run `frontload uninstall` in each initialized repository. For multiple repos,
+keep the command until the final cleanup:
+
+```sh
+frontload uninstall --repo /path/to/first --keep-package
+frontload uninstall --repo /path/to/final
+```
+
+The final command removes the global package. Unrelated agent settings remain.
+
 - [Full decision and evidence](proof/codex-net-benefit-audit.md)
 - [Issue log](proof/frontload-audit-issues.md)

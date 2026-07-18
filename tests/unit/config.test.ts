@@ -71,6 +71,9 @@ describe("config", () => {
     expect(readme).toContain("OpenCode");
     expect(readme).toContain("https://github.com/rtk-ai/rtk");
     expect(readme).toContain("proof/codex-net-benefit-audit.md");
+    expect(readme).toContain("frontload uninstall");
+    expect(readme).toContain("--keep-package");
+    expect(readme).toMatch(/each initialized repository/i);
     expect(readme).not.toMatch(/development resumes/i);
     expect(readme).not.toContain("npx frontload init");
     expect(readme).not.toContain("fl_repo_dossier");
