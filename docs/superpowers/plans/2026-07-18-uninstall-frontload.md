@@ -6,7 +6,7 @@
 
 **Architecture:** A focused `src/install/uninstall.ts` module owns removal discovery, surgical shared-config edits, fixed-path cleanup, and injectable package-manager execution. The existing CLI delegates to that module and a small formatter, while tests exercise real temporary filesystem layouts and mock only the external package-manager boundary.
 
-**Tech Stack:** TypeScript, Node.js filesystem/child-process APIs, Commander, jsonc-parser, Vitest, execa.
+**Tech Stack:** TypeScript, Node.js filesystem/child-process APIs, Commander, jsonc-parser, smol-toml, Vitest, execa.
 
 ## Global Constraints
 
@@ -26,6 +26,8 @@
 **Files:**
 - Create: `src/install/uninstall.ts`
 - Modify: `src/utils/path.ts`
+- Modify: `package.json`
+- Modify: `pnpm-lock.yaml`
 - Create: `tests/unit/uninstall.test.ts`
 
 **Interfaces:**

@@ -203,6 +203,49 @@ describe("Frontload uninstall", () => {
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(false);
   });
 
+  it("preserves malformed Codex values with valid table headers", async () => {
+    const { repo, home } = await initializedRepo();
+    const codexConfig = path.join(repo, ".codex/config.toml");
+    const malformedToml = [
+      "[mcp_servers.frontload]",
+      'command = "frontload"',
+      `args = ["mcp", "--repo", "${repo}"]`,
+      "broken = [",
+      "",
+    ].join("\n");
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, malformedToml);
+
+    const result = uninstallArtifacts(repo, home);
+
+    expect(fs.readFileSync(codexConfig, "utf8")).toBe(malformedToml);
+    expect(result.failures.map((failure) => failure.target)).toContain(codexConfig);
+  });
+
+  it("preserves same-key MCP servers that Frontload does not own", async () => {
+    const { repo, home } = await initializedRepo();
+    const codexConfig = path.join(repo, ".codex/config.toml");
+    const claudeConfig = path.join(repo, ".mcp.json");
+    const unrelatedCodex = [
+      "[mcp_servers.frontload]",
+      'command = "other-server"',
+      'args = ["serve"]',
+      "",
+    ].join("\n");
+    const unrelatedClaude = {
+      mcpServers: { frontload: { command: "other-server", args: ["serve"] } },
+    };
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, unrelatedCodex);
+    writeJson(claudeConfig, unrelatedClaude);
+
+    const result = uninstallArtifacts(repo, home);
+
+    expect(result.failures).toEqual([]);
+    expect(fs.readFileSync(codexConfig, "utf8")).toBe(unrelatedCodex);
+    expect(JSON.parse(fs.readFileSync(claudeConfig, "utf8"))).toEqual(unrelatedClaude);
+  });
+
   it("removes global package installs across supported package managers", () => {
     expect(globalUninstallCommands()).toEqual([
       { packageManager: "npm", command: "npm", args: ["uninstall", "-g", "frontload"] },

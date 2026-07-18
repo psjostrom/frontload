@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { parse, type ParseError } from "jsonc-parser";
+import { parse as parseToml } from "smol-toml";
 import { mcpConfigAdapters, needsShellForWindowsShim, type AgentName } from "./install.js";
 import { removeStateDirIgnore } from "../utils/path.js";
 
@@ -147,31 +148,80 @@ function recordAction(
   }
 }
 
-function validateMcpConfig(agent: AgentName, configPath: string): void {
-  if (!fs.existsSync(configPath)) return;
+function repoArgFromArgs(args: unknown): string | undefined {
+  if (!Array.isArray(args)) return undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--repo" && typeof args[index + 1] === "string") return args[index + 1] as string;
+    if (typeof arg === "string" && arg.startsWith("--repo=")) return arg.slice("--repo=".length);
+  }
+  return undefined;
+}
+
+function isManagedStdioEntry(entry: unknown): boolean {
+  return isJsonObject(entry) &&
+    entry.command === "frontload" &&
+    Array.isArray(entry.args) &&
+    entry.args.includes("mcp") &&
+    repoArgFromArgs(entry.args) !== undefined;
+}
+
+function validateMcpConfig(agent: AgentName, configPath: string): unknown {
+  if (!fs.existsSync(configPath)) return undefined;
   const text = fs.readFileSync(configPath, "utf8");
   if (agent === "codex") {
-    const malformedHeader = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line.startsWith("[") && !/^\[[^\]]+\]$/.test(line));
-    if (malformedHeader) throw new Error(`Malformed TOML table header: ${malformedHeader}`);
-    return;
+    return parseToml(text);
   }
   if (agent === "claude") {
-    JSON.parse(text);
-    return;
+    return JSON.parse(text);
   }
   const errors: ParseError[] = [];
-  parse(text, errors, { allowTrailingComma: true });
+  const parsed = parse(text, errors, { allowTrailingComma: true });
   if (errors.length > 0) throw new Error(`Malformed JSONC configuration (${errors.length} parse errors)`);
+  return parsed;
+}
+
+function removeManagedCodexMcp(configPath: string, parsed: unknown): boolean {
+  if (!isJsonObject(parsed) || !isJsonObject(parsed.mcp_servers)) return false;
+  const tableNames = Object.entries(parsed.mcp_servers)
+    .filter(([name, entry]) => (name === "frontload" || name.startsWith("frontload_")) && isManagedStdioEntry(entry))
+    .map(([name]) => `mcp_servers.${name}`);
+  if (tableNames.length === 0) return false;
+  const current = fs.readFileSync(configPath, "utf8");
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  let skipping = false;
+  const lines = current.split(/\r?\n/).filter((line) => {
+    const table = line.trim().match(/^\[([^\]]+)\]$/)?.[1];
+    if (table) skipping = tableNames.some((name) => table === name || table.startsWith(`${name}.`));
+    return !skipping;
+  });
+  fs.writeFileSync(configPath, lines.join(eol));
+  return true;
+}
+
+function hasManagedMcpEntry(agent: AgentName, parsed: unknown): boolean {
+  if (!isJsonObject(parsed)) return false;
+  if (agent === "claude") {
+    return isJsonObject(parsed.mcpServers) && isManagedStdioEntry(parsed.mcpServers.frontload);
+  }
+  if (agent === "opencode") {
+    if (!isJsonObject(parsed.mcp) || !isJsonObject(parsed.mcp.frontload)) return false;
+    const command = parsed.mcp.frontload.command;
+    return Array.isArray(command) &&
+      command[0] === "frontload" &&
+      command.includes("mcp") &&
+      repoArgFromArgs(command) !== undefined;
+  }
+  return false;
 }
 
 function removeMcpConfig(records: RemovalRecord[], agent: AgentName, configPath: string | null, boundary: string): void {
   if (!configPath) return;
   recordAction(records, "agent", configPath, () => {
-    validateMcpConfig(agent, configPath);
-    const removed = mcpConfigAdapters[agent].remove(configPath);
+    const parsed = validateMcpConfig(agent, configPath);
+    const removed = agent === "codex"
+      ? removeManagedCodexMcp(configPath, parsed)
+      : hasManagedMcpEntry(agent, parsed) && mcpConfigAdapters[agent].remove(configPath);
     if (removed) cleanupEmptyConfig(configPath, boundary);
     return removed;
   });

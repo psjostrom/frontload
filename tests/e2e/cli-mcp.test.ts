@@ -1483,6 +1483,12 @@ describe("e2e proof workflow", () => {
     fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}\n");
     fs.mkdirSync(path.join(repo, ".frontload"));
     fs.appendFileSync(path.join(repo, ".git/info/exclude"), ".frontload/\n");
+    fs.writeFileSync(path.join(repo, ".mcp.json"), JSON.stringify({
+      mcpServers: {
+        keep: { command: "keep" },
+        frontload: { command: "frontload", args: ["mcp", "--repo", repo] },
+      },
+    }, null, 2));
     fs.mkdirSync(path.join(home, ".codex/skills/frontload"), { recursive: true });
     fs.writeFileSync(path.join(home, ".codex/skills/frontload/SKILL.md"), "Frontload\n");
     for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
@@ -1507,6 +1513,9 @@ describe("e2e proof workflow", () => {
     expect(result.stdout).toContain("Global packages");
     expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(false);
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf8"))).toEqual({
+      mcpServers: { keep: { command: "keep" } },
+    });
     expect(fs.existsSync(path.join(home, ".codex/skills/frontload"))).toBe(false);
     expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(4);
   });
