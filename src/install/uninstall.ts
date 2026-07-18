@@ -234,7 +234,7 @@ function packageRemovalWasAbsent(error: unknown): boolean {
       .map((key) => key in error ? String((error as Record<string, unknown>)[key]) : "")
       .join("\n")
     : String(error);
-  return /not (?:globally )?installed|not in your dependencies|package .*not found|dependency .*not found|no package.*frontload/i.test(detail);
+  return /not (?:globally )?installed|not in your dependencies|package .*not found|dependency .*not found|no package.*frontload|cannot remove .*no dependency found|isn't specified in a package\.json/i.test(detail);
 }
 
 export function uninstallGlobalPackages(runner: PackageRemovalRunner = execFileSync): RemovalRecord[] {

@@ -245,4 +245,23 @@ describe("Frontload uninstall", () => {
     expect(result.records.some((record) => record.category === "package")).toBe(false);
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(false);
   });
+
+  it("treats supported package-manager missing-package diagnostics as absent", () => {
+    const diagnostics: Record<string, string> = {
+      npm: "npm error package frontload is not installed",
+      pnpm: "ERR_PNPM_CANNOT_REMOVE_MISSING_DEPS Cannot remove 'frontload': no dependency found",
+      yarn: "This module isn't specified in a package.json file.",
+      bun: 'error: package "frontload" is not installed',
+    };
+    const runner: PackageRemovalRunner = (command) => {
+      throw Object.assign(new Error("remove failed"), { stderr: diagnostics[command] });
+    };
+
+    expect(uninstallGlobalPackages(runner).map((record) => record.status)).toEqual([
+      "absent",
+      "absent",
+      "absent",
+      "absent",
+    ]);
+  });
 });

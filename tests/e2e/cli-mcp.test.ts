@@ -1540,6 +1540,35 @@ describe("e2e proof workflow", () => {
     expect(result.stdout).not.toContain("Global packages");
   });
 
+  it("reports package-manager uninstall failures after continuing cleanup", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-fail-cli-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-fail-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-fail-bin-"));
+    const callsFile = path.join(bin, "calls.log");
+    for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
+      const failure = manager === "npm" ? "echo 'permission denied' >&2\nexit 9\n" : "";
+      writeShellScript(
+        path.join(bin, manager),
+        `#!/bin/sh\nprintf '%s\\n' "$0 $*" >> ${JSON.stringify(callsFile)}\n${failure}`,
+      );
+    }
+
+    const result = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "uninstall",
+      "--repo",
+      repo,
+      "--home",
+      home,
+    ], { env: { ...process.env, PATH: bin }, reject: false });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("Frontload uninstall incomplete");
+    expect(result.stdout).toContain("[failed] npm uninstall -g frontload");
+    expect(result.stdout).toContain("permission denied");
+    expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(4);
+  });
+
   it("keeps plain doctor independent from dogfood validation", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-plain-"));
     await execa("git", ["init"], { cwd: repo });
