@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an idempotent `frontload uninstall` command that removes every Frontload artifact initialized for a repository and user environment, then removes all supported global package installations.
+> Superseded for package and bundled-content cleanup by `2026-07-18-argent-style-uninstall.md`.
+
+**Goal:** Add an idempotent `frontload uninstall` command that removes every Frontload artifact initialized for a repository and user environment, then removes the selected global package installation.
 
 **Architecture:** A focused `src/install/uninstall.ts` module owns removal discovery, surgical shared-config edits, fixed-path cleanup, and injectable package-manager execution. The existing CLI delegates to that module and a small formatter, while tests exercise real temporary filesystem layouts and mock only the external package-manager boundary.
 
@@ -14,7 +16,7 @@
 - Delete shared config files or parent directories only when Frontload removal leaves no meaningful content.
 - Never overwrite malformed shared config; report it and continue independent cleanup.
 - Missing artifacts, package managers, and package installations are harmless.
-- Support npm, pnpm, Yarn, and Bun global removals.
+- Select one npm, pnpm, Yarn, or Bun global removal using init's package-manager detection.
 - Do not scan the filesystem for other initialized repositories.
 - The default removes the global package; `--keep-package` defers only that final phase.
 - Follow red-green-refactor for every production behavior.

@@ -29,7 +29,9 @@ frontload uninstall --repo /path/to/first --keep-package
 frontload uninstall --repo /path/to/final
 ```
 
-The final command removes the global package. Unrelated agent settings remain.
+The final command removes the global package with one package-manager command
+(`npm uninstall -g frontload` by default). Unrelated agent settings and files
+remain.
 
 - [Full decision and evidence](proof/codex-net-benefit-audit.md)
 - [Issue log](proof/frontload-audit-issues.md)

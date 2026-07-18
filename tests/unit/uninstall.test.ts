@@ -157,13 +157,16 @@ describe("Frontload uninstall", () => {
       fs.mkdirSync(skillPath, { recursive: true });
       fs.writeFileSync(path.join(skillPath, "SKILL.md"), "Frontload\n");
     }
+    fs.writeFileSync(path.join(skillPaths[0], "keep.txt"), "user-owned\n");
     fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
     fs.writeFileSync(pluginPath, "FrontloadGate\n");
 
     const result = uninstallArtifacts(repo, home);
 
     expect(result.failures).toEqual([]);
-    expect(skillPaths.every((skillPath) => !fs.existsSync(skillPath))).toBe(true);
+    expect(fs.existsSync(path.join(skillPaths[0], "SKILL.md"))).toBe(false);
+    expect(fs.readFileSync(path.join(skillPaths[0], "keep.txt"), "utf8")).toBe("user-owned\n");
+    expect(skillPaths.slice(1).every((skillPath) => !fs.existsSync(skillPath))).toBe(true);
     expect(fs.existsSync(pluginPath)).toBe(false);
     expect(fs.readFileSync(codexConfig, "utf8")).toContain("mcp_servers.keep");
     expect(fs.readFileSync(codexConfig, "utf8")).not.toContain("mcp_servers.frontload");
@@ -178,6 +181,22 @@ describe("Frontload uninstall", () => {
       mcp: { keep: { type: "local", command: ["keep"] } },
     });
   });
+
+  it("does not follow a pre-existing skill symlink", async () => {
+    const { repo, home } = await initializedRepo();
+    const externalSkill = fs.mkdtempSync(path.join(os.tmpdir(), "frontload-uninstall-external-skill-"));
+    const skillPath = path.join(home, ".codex/skills/frontload");
+    fs.writeFileSync(path.join(externalSkill, "SKILL.md"), "not-installed-by-frontload\n");
+    fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+    fs.symlinkSync(externalSkill, skillPath, "dir");
+
+    const result = uninstallArtifacts(repo, home);
+
+    expect(result.failures).toEqual([]);
+    expect(fs.lstatSync(skillPath).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(externalSkill, "SKILL.md"), "utf8")).toBe("not-installed-by-frontload\n");
+  });
+
   it("reports malformed shared config without overwriting it", async () => {
     const { repo, home } = await initializedRepo();
     const codexConfig = path.join(repo, ".codex/config.toml");
@@ -246,35 +265,51 @@ describe("Frontload uninstall", () => {
     expect(JSON.parse(fs.readFileSync(claudeConfig, "utf8"))).toEqual(unrelatedClaude);
   });
 
-  it("removes global package installs across supported package managers", () => {
-    expect(globalUninstallCommands()).toEqual([
+  it("removes managed Codex MCP entries with quoted table keys", async () => {
+    const { repo, home } = await initializedRepo();
+    const codexConfig = path.join(repo, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, [
+      '[mcp_servers."frontload_repo"]',
+      'command = "frontload"',
+      `args = ["mcp", "--repo=${repo}"]`,
+      "",
+      "[mcp_servers.keep]",
+      'command = "keep"',
+      "",
+    ].join("\n"));
+
+    const result = uninstallArtifacts(repo, home);
+
+    expect(result.failures).toEqual([]);
+    expect(fs.readFileSync(codexConfig, "utf8")).toContain("mcp_servers.keep");
+    expect(fs.readFileSync(codexConfig, "utf8")).not.toContain("frontload_repo");
+  });
+
+  it("removes the global package with only the selected package manager", () => {
+    expect(globalUninstallCommands("npm")).toEqual([
       { packageManager: "npm", command: "npm", args: ["uninstall", "-g", "frontload"] },
+    ]);
+    expect(globalUninstallCommands("pnpm")).toEqual([
       { packageManager: "pnpm", command: "pnpm", args: ["remove", "-g", "frontload"] },
+    ]);
+    expect(globalUninstallCommands("yarn")).toEqual([
       { packageManager: "yarn", command: "yarn", args: ["global", "remove", "frontload"] },
+    ]);
+    expect(globalUninstallCommands("bun")).toEqual([
       { packageManager: "bun", command: "bun", args: ["remove", "-g", "frontload"] },
     ]);
     const calls: string[] = [];
     const runner: PackageRemovalRunner = (command, args) => {
       calls.push([command, ...args].join(" "));
-      if (command === "pnpm") throw Object.assign(new Error("spawn pnpm ENOENT"), { code: "ENOENT" });
-      if (command === "yarn") throw Object.assign(new Error("not installed"), { stderr: 'Package "frontload" is not in your dependencies' });
-      if (command === "bun") throw Object.assign(new Error("permission denied"), { stderr: "permission denied" });
       return "";
     };
 
-    const records = uninstallGlobalPackages(runner);
+    const records = uninstallGlobalPackages(runner, "npm");
 
-    expect(calls).toEqual([
-      "npm uninstall -g frontload",
-      "pnpm remove -g frontload",
-      "yarn global remove frontload",
-      "bun remove -g frontload",
-    ]);
+    expect(calls).toEqual(["npm uninstall -g frontload"]);
     expect(records.map(({ target, status }) => ({ target, status }))).toEqual([
       { target: "npm uninstall -g frontload", status: "removed" },
-      { target: "pnpm remove -g frontload", status: "absent" },
-      { target: "yarn global remove frontload", status: "absent" },
-      { target: "bun remove -g frontload", status: "failed" },
     ]);
   });
 
@@ -304,11 +339,8 @@ describe("Frontload uninstall", () => {
       throw Object.assign(new Error("remove failed"), { stderr: diagnostics[command] });
     };
 
-    expect(uninstallGlobalPackages(runner).map((record) => record.status)).toEqual([
-      "absent",
-      "absent",
-      "absent",
-      "absent",
-    ]);
+    for (const packageManager of ["npm", "pnpm", "yarn", "bun"] as const) {
+      expect(uninstallGlobalPackages(runner, packageManager).map((record) => record.status)).toEqual(["absent"]);
+    }
   });
 });

@@ -4,7 +4,14 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { parse, type ParseError } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
-import { mcpConfigAdapters, needsShellForWindowsShim, type AgentName } from "./install.js";
+import {
+  detectPackageManager,
+  mcpConfigAdapters,
+  needsShellForWindowsShim,
+  packageRoot,
+  type AgentName,
+  type PackageManager,
+} from "./install.js";
 import { removeStateDirIgnore } from "../utils/path.js";
 
 export type RemovalRecord = {
@@ -103,6 +110,62 @@ function removePath(target: string, boundary: string): boolean {
   return true;
 }
 
+function bundledRelativePaths(sourceDir: string): { files: string[]; directories: string[] } {
+  const files: string[] = [];
+  const directories: string[] = [];
+  const visit = (current: string, relativeDir = ""): void => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        visit(path.join(current, entry.name), relativePath);
+        directories.push(relativePath);
+      } else {
+        files.push(relativePath);
+      }
+    }
+  };
+  visit(sourceDir);
+  return { files, directories };
+}
+
+function removeBundledFiles(sourceDir: string, targetDir: string, boundary: string): boolean {
+  if (!fs.existsSync(sourceDir) || !fs.existsSync(targetDir)) return false;
+  const targetStats = fs.lstatSync(targetDir);
+  if (!targetStats.isDirectory() || targetStats.isSymbolicLink()) return false;
+  const realTargetDir = fs.realpathSync.native(targetDir);
+  const { files, directories } = bundledRelativePaths(sourceDir);
+  let removed = false;
+  for (const relativePath of files) {
+    const target = path.join(targetDir, relativePath);
+    if (!fs.existsSync(target) || fs.lstatSync(target).isDirectory()) continue;
+    const realTarget = fs.realpathSync.native(target);
+    const relativeTarget = path.relative(realTargetDir, realTarget);
+    if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) continue;
+    fs.rmSync(target, { force: true });
+    removed = true;
+  }
+  for (const relativePath of directories.sort((left, right) => right.length - left.length)) {
+    const target = path.join(targetDir, relativePath);
+    if (!fs.existsSync(target)) continue;
+    const stats = fs.lstatSync(target);
+    if (stats.isDirectory() && !stats.isSymbolicLink() && fs.readdirSync(target).length === 0) {
+      fs.rmdirSync(target);
+    }
+  }
+  if (fs.existsSync(targetDir) && fs.statSync(targetDir).isDirectory() && fs.readdirSync(targetDir).length === 0) {
+    fs.rmdirSync(targetDir);
+  }
+  removeEmptyParents(path.dirname(targetDir), boundary);
+  return removed;
+}
+
+function removeFile(target: string, boundary: string): boolean {
+  if (!fs.existsSync(target) || fs.lstatSync(target).isDirectory()) return false;
+  fs.rmSync(target, { force: true });
+  removeEmptyParents(path.dirname(target), boundary);
+  return true;
+}
+
 function cleanupEmptyConfig(file: string, boundary: string): void {
   if (!fs.existsSync(file)) return;
   const text = fs.readFileSync(file, "utf8");
@@ -183,16 +246,34 @@ function validateMcpConfig(agent: AgentName, configPath: string): unknown {
 
 function removeManagedCodexMcp(configPath: string, parsed: unknown): boolean {
   if (!isJsonObject(parsed) || !isJsonObject(parsed.mcp_servers)) return false;
-  const tableNames = Object.entries(parsed.mcp_servers)
+  const serverNames = new Set(Object.entries(parsed.mcp_servers)
     .filter(([name, entry]) => (name === "frontload" || name.startsWith("frontload_")) && isManagedStdioEntry(entry))
-    .map(([name]) => `mcp_servers.${name}`);
-  if (tableNames.length === 0) return false;
+    .map(([name]) => name));
+  if (serverNames.size === 0) return false;
   const current = fs.readFileSync(configPath, "utf8");
   const eol = current.includes("\r\n") ? "\r\n" : "\n";
   let skipping = false;
   const lines = current.split(/\r?\n/).filter((line) => {
-    const table = line.trim().match(/^\[([^\]]+)\]$/)?.[1];
-    if (table) skipping = tableNames.some((name) => table === name || table.startsWith(`${name}.`));
+    const table = line.trim().match(/^\[(.+)\](?:\s*#.*)?$/)?.[1];
+    if (table) {
+      const marker = "__frontload_uninstall_marker__";
+      const findMarker = (value: unknown, currentPath: string[] = []): string[] | null => {
+        if (!isJsonObject(value)) return null;
+        if (value[marker] === true) return currentPath;
+        for (const [key, child] of Object.entries(value)) {
+          const found = findMarker(child, [...currentPath, key]);
+          if (found) return found;
+        }
+        return null;
+      };
+      let tablePath: string[] | null = null;
+      try {
+        tablePath = findMarker(parseToml(`[${table}]\n${marker} = true\n`));
+      } catch {
+        // The complete file already parsed, so an unrecognized header is unrelated.
+      }
+      skipping = tablePath?.[0] === "mcp_servers" && serverNames.has(tablePath[1] ?? "");
+    }
     return !skipping;
   });
   fs.writeFileSync(configPath, lines.join(eol));
@@ -250,15 +331,17 @@ export function uninstallArtifacts(repoRoot: string, homeDir = os.homedir()): Un
   recordAction(records, "agent", codexHooks, () => removeFrontloadHooks(codexHooks, absHome));
   recordAction(records, "agent", claudeSettings, () => removeFrontloadHooks(claudeSettings, absHome));
 
-  const fixedAgentPaths = [
-    path.join(absHome, ".codex/skills/frontload"),
-    path.join(absHome, ".claude/skills/frontload"),
-    path.join(absHome, ".config/opencode/skills/frontload"),
-    path.join(absHome, ".config/opencode/plugins/frontload-gate.js"),
+  const root = packageRoot();
+  const skillPaths = [
+    [path.join(root, "plugins/codex/skills/frontload"), path.join(absHome, ".codex/skills/frontload")],
+    [path.join(root, "plugins/claude/skills/frontload"), path.join(absHome, ".claude/skills/frontload")],
+    [path.join(root, "plugins/opencode/skills/frontload"), path.join(absHome, ".config/opencode/skills/frontload")],
   ];
-  for (const target of fixedAgentPaths) {
-    recordAction(records, "agent", target, () => removePath(target, absHome));
+  for (const [source, target] of skillPaths) {
+    recordAction(records, "agent", target, () => removeBundledFiles(source, target, absHome));
   }
+  const opencodePlugin = path.join(absHome, ".config/opencode/plugins/frontload-gate.js");
+  recordAction(records, "agent", opencodePlugin, () => removeFile(opencodePlugin, absHome));
 
   return {
     repoRoot: absRepo,
@@ -268,13 +351,18 @@ export function uninstallArtifacts(repoRoot: string, homeDir = os.homedir()): Un
   };
 }
 
-export function globalUninstallCommands(): GlobalUninstallCommand[] {
-  return [
-    { packageManager: "npm", command: "npm", args: ["uninstall", "-g", "frontload"] },
-    { packageManager: "pnpm", command: "pnpm", args: ["remove", "-g", "frontload"] },
-    { packageManager: "yarn", command: "yarn", args: ["global", "remove", "frontload"] },
-    { packageManager: "bun", command: "bun", args: ["remove", "-g", "frontload"] },
-  ];
+export function globalUninstallCommands(packageManager: PackageManager = detectPackageManager()): GlobalUninstallCommand[] {
+  switch (packageManager) {
+    case "pnpm":
+      return [{ packageManager, command: "pnpm", args: ["remove", "-g", "frontload"] }];
+    case "yarn":
+      return [{ packageManager, command: "yarn", args: ["global", "remove", "frontload"] }];
+    case "bun":
+      return [{ packageManager, command: "bun", args: ["remove", "-g", "frontload"] }];
+    case "npm":
+    default:
+      return [{ packageManager: "npm", command: "npm", args: ["uninstall", "-g", "frontload"] }];
+  }
 }
 
 function packageRemovalWasAbsent(error: unknown): boolean {
@@ -287,8 +375,11 @@ function packageRemovalWasAbsent(error: unknown): boolean {
   return /not (?:globally )?installed|not in your dependencies|package .*not found|dependency .*not found|no package.*frontload|cannot remove .*no dependency found|isn't specified in a package\.json/i.test(detail);
 }
 
-export function uninstallGlobalPackages(runner: PackageRemovalRunner = execFileSync): RemovalRecord[] {
-  return globalUninstallCommands().map((removal) => {
+export function uninstallGlobalPackages(
+  runner: PackageRemovalRunner = execFileSync,
+  packageManager: PackageManager = detectPackageManager(),
+): RemovalRecord[] {
+  return globalUninstallCommands(packageManager).map((removal) => {
     const target = [removal.command, ...removal.args].join(" ");
     try {
       runner(removal.command, removal.args, {

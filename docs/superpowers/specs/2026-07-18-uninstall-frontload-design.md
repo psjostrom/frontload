@@ -40,17 +40,22 @@ Under the selected home directory, uninstall removes:
 - the Codex, Claude Code, and OpenCode `frontload` skill directories
 - the OpenCode `frontload-gate.js` plugin
 
-The fixed Frontload skill and plugin paths are removed recursively. Shared
+Frontload follows Argent's bundled-content cleanup model. The package's bundled
+skill and plugin files are the source of truth: uninstall removes those exact
+relative file paths from each target and removes directories only after they
+become empty. It never recursively deletes a shared target directory. Shared
 configuration files are edited rather than replaced, preserving unrelated user
 configuration.
 
 ## Global Package Removal
 
-After repository and agent cleanup, the command attempts the supported global
-removal operation for npm, pnpm, Yarn, and Bun when each package manager is
-available. This handles installations made by a different package manager than
-the shell currently reports and removes duplicate global Frontload installs.
-Missing package managers and package-not-installed responses are harmless.
+After repository and agent cleanup, the command uses the same package-manager
+detection as initialization and runs that manager's single uninstall operation,
+falling back to npm. An npm invocation therefore runs
+`npm uninstall -g frontload`; pnpm, Yarn, and Bun installations use their
+equivalent command. If no matching global installation is detected, package
+removal is reported as absent instead of running destructive commands through
+every package manager.
 
 If a package manager reports a real uninstall failure, the command reports the
 failure, completes all other cleanup attempts, and exits nonzero so the user is
@@ -86,9 +91,10 @@ failure requiring manual cleanup.
 
 Unit tests create temporary repositories and home directories containing a mix
 of Frontload-managed and unrelated configuration. They verify complete removal,
-preservation of unrelated content, cleanup of empty files/directories, malformed
-config handling, idempotency, Git exclude cleanup, all three agent integrations,
-and mocked package-manager behavior.
+preservation of unrelated content, exact bundled-file cleanup, cleanup of empty
+files/directories, quoted Codex TOML tables, malformed config handling,
+idempotency, Git exclude cleanup, all three agent integrations, and detected
+package-manager behavior.
 
 An end-to-end CLI test runs the built command against temporary repository,
 home, and executable paths. It verifies the human-readable summary, exit status,

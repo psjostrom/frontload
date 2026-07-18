@@ -1491,12 +1491,10 @@ describe("e2e proof workflow", () => {
     }, null, 2));
     fs.mkdirSync(path.join(home, ".codex/skills/frontload"), { recursive: true });
     fs.writeFileSync(path.join(home, ".codex/skills/frontload/SKILL.md"), "Frontload\n");
-    for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
-      writeShellScript(
-        path.join(bin, manager),
-        `#!/bin/sh\nprintf '%s\\n' "$0 $*" >> ${JSON.stringify(callsFile)}\n`,
-      );
-    }
+    writeShellScript(
+      path.join(bin, "npm"),
+      `#!/bin/sh\nprintf '%s\\n' "$0 $*" >> ${JSON.stringify(callsFile)}\n`,
+    );
 
     const result = await execa(process.execPath, [
       path.resolve("dist/src/cli/index.js"),
@@ -1505,7 +1503,7 @@ describe("e2e proof workflow", () => {
       repo,
       "--home",
       home,
-    ], { env: { ...process.env, PATH: bin }, reject: false });
+    ], { env: { ...process.env, PATH: bin, npm_config_user_agent: "npm/10.0.0" }, reject: false });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Frontload uninstall complete");
@@ -1517,7 +1515,8 @@ describe("e2e proof workflow", () => {
       mcpServers: { keep: { command: "keep" } },
     });
     expect(fs.existsSync(path.join(home, ".codex/skills/frontload"))).toBe(false);
-    expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(4);
+    expect(fs.readFileSync(callsFile, "utf8")).toContain("npm uninstall -g frontload");
+    expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
   it("keeps the global package when CLI cleanup requests it", async () => {
@@ -1554,13 +1553,10 @@ describe("e2e proof workflow", () => {
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-fail-home-"));
     const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-fail-bin-"));
     const callsFile = path.join(bin, "calls.log");
-    for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
-      const failure = manager === "npm" ? "echo 'permission denied' >&2\nexit 9\n" : "";
-      writeShellScript(
-        path.join(bin, manager),
-        `#!/bin/sh\nprintf '%s\\n' "$0 $*" >> ${JSON.stringify(callsFile)}\n${failure}`,
-      );
-    }
+    writeShellScript(
+      path.join(bin, "npm"),
+      `#!/bin/sh\nprintf '%s\\n' "$0 $*" >> ${JSON.stringify(callsFile)}\necho 'permission denied' >&2\nexit 9\n`,
+    );
 
     const result = await execa(process.execPath, [
       path.resolve("dist/src/cli/index.js"),
@@ -1569,13 +1565,13 @@ describe("e2e proof workflow", () => {
       repo,
       "--home",
       home,
-    ], { env: { ...process.env, PATH: bin }, reject: false });
+    ], { env: { ...process.env, PATH: bin, npm_config_user_agent: "npm/10.0.0" }, reject: false });
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain("Frontload uninstall incomplete");
     expect(result.stdout).toContain("[failed] npm uninstall -g frontload");
     expect(result.stdout).toContain("permission denied");
-    expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(4);
+    expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
   it("keeps plain doctor independent from dogfood validation", async () => {
