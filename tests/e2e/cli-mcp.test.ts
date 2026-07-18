@@ -1474,6 +1474,72 @@ describe("e2e proof workflow", () => {
     expect(data.checks.dogfood.codex.probeError).toContain("agent integrations are halted indefinitely");
   });
 
+  it("uninstalls every initialized Frontload artifact", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-cli-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-cli-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-cli-bin-"));
+    const callsFile = path.join(bin, "calls.log");
+    await execa("git", ["init"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}\n");
+    fs.mkdirSync(path.join(repo, ".frontload"));
+    fs.appendFileSync(path.join(repo, ".git/info/exclude"), ".frontload/\n");
+    fs.mkdirSync(path.join(home, ".codex/skills/frontload"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".codex/skills/frontload/SKILL.md"), "Frontload\n");
+    for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
+      writeShellScript(
+        path.join(bin, manager),
+        `#!/bin/sh\nprintf '%s\\n' "$0 $*" >> ${JSON.stringify(callsFile)}\n`,
+      );
+    }
+
+    const result = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "uninstall",
+      "--repo",
+      repo,
+      "--home",
+      home,
+    ], { env: { ...process.env, PATH: bin }, reject: false });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Frontload uninstall complete");
+    expect(result.stdout).toContain("Repository artifacts");
+    expect(result.stdout).toContain("Global packages");
+    expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".codex/skills/frontload"))).toBe(false);
+    expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(4);
+  });
+
+  it("keeps the global package when CLI cleanup requests it", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-keep-cli-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-keep-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-uninstall-keep-bin-"));
+    const callsFile = path.join(bin, "calls.log");
+    fs.writeFileSync(path.join(repo, "frontload.config.json"), "{}\n");
+    for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
+      writeShellScript(
+        path.join(bin, manager),
+        `#!/bin/sh\nprintf '%s\\n' "$0 $*" >> ${JSON.stringify(callsFile)}\n`,
+      );
+    }
+
+    const result = await execa(process.execPath, [
+      path.resolve("dist/src/cli/index.js"),
+      "uninstall",
+      "--repo",
+      repo,
+      "--home",
+      home,
+      "--keep-package",
+    ], { env: { ...process.env, PATH: bin }, reject: false });
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.existsSync(path.join(repo, "frontload.config.json"))).toBe(false);
+    expect(fs.existsSync(callsFile)).toBe(false);
+    expect(result.stdout).not.toContain("Global packages");
+  });
+
   it("keeps plain doctor independent from dogfood validation", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-doctor-plain-"));
     await execa("git", ["init"], { cwd: repo });

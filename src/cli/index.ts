@@ -20,6 +20,7 @@ import { buildIndex } from "../indexer/indexer.js";
 import { parseHookHost, readStdin, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
 import { runtimeRepoFromCwd } from "../gate/runtime.js";
 import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, needsShellForWindowsShim, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
+import { uninstallFrontload } from "../install/uninstall.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
 import { agentIntegrationsPaused, agentIntegrationsPauseMessage, agentIntegrationsReportPath } from "../product/status.js";
@@ -31,6 +32,7 @@ import { applyAgentCheckboxKey, createAgentCheckboxState, formatAgentCheckboxPro
 import { formatInitOutput, formatUpgradeOutput } from "./init-output.js";
 import { parsePositiveInteger } from "./options.js";
 import { applyConfigScopeRadioKey, createConfigScopeRadioState, formatConfigScopeRadioPrompt, selectedConfigScope, type ConfigScopeRadioState } from "./prompts.js";
+import { formatUninstallOutput } from "./uninstall-output.js";
 
 type ResultMeasurement<T> = {
   output: (result: T) => unknown;
@@ -845,6 +847,20 @@ program
       return;
     }
     execFileSync("frontload", refreshArgs(repoRoot, homeDir, globalInstall), { stdio: "inherit" });
+  });
+
+program.command("uninstall")
+  .option("--repo <repo>", "repository root", ".")
+  .option("--home <dir>", "home directory for agent configuration cleanup")
+  .option("--keep-package", "remove initialized artifacts but keep the global package")
+  .action((opts) => {
+    const result = uninstallFrontload(
+      resolveRepo(opts.repo),
+      opts.home ? path.resolve(opts.home) : os.homedir(),
+      { keepPackage: !!opts.keepPackage },
+    );
+    process.stdout.write(formatUninstallOutput(result));
+    if (result.failures.length > 0) process.exitCode = 1;
   });
 
 program.command("doctor")
