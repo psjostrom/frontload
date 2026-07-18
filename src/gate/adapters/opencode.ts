@@ -1,4 +1,5 @@
 import path from "node:path";
+import { agentIntegrationsPaused } from "../../product/status.js";
 import { supportsGateTool } from "../capabilities.js";
 import { evaluatePostToolUse, evaluatePreToolUse, initializedGateContext } from "../runtime.js";
 
@@ -30,6 +31,7 @@ function canonicalToolName(tool: unknown): string | null {
 }
 
 export async function FrontloadGate({ directory }: OpenCodePluginContext): Promise<Partial<OpenCodeHooks>> {
+  if (agentIntegrationsPaused) return {};
   const startDirectory = typeof directory === "string" && directory.trim() ? path.resolve(directory) : process.cwd();
   let context: ReturnType<typeof initializedGateContext>;
   try {
