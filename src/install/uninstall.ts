@@ -49,8 +49,8 @@ function isFrontloadHook(hook: unknown): boolean {
     (hook.args[1] === "pre-tool-use" || hook.args[1] === "post-tool-use");
 }
 
-function withoutFrontloadHooks(group: unknown): JsonObject | null {
-  if (!isJsonObject(group)) return null;
+function withoutFrontloadHooks(group: unknown): unknown | null {
+  if (!isJsonObject(group)) return group;
   if (!Array.isArray(group.hooks)) return group;
   const hooks = group.hooks.filter((hook) => !isFrontloadHook(hook));
   return hooks.length > 0 ? { ...group, hooks } : null;
@@ -70,7 +70,7 @@ function removeFrontloadHooks(file: string, boundary: string): boolean {
     }
     const groups = value
       .map(withoutFrontloadHooks)
-      .filter((group): group is JsonObject => group !== null);
+      .filter((group) => group !== null);
     hooks[event] = groups;
     removed = removed || groups.length !== value.length || JSON.stringify(groups) !== JSON.stringify(value);
   }

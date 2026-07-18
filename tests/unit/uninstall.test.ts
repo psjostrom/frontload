@@ -57,6 +57,7 @@ describe("Frontload uninstall", () => {
         PreToolUse: [
           { matcher: "Bash", hooks: [{ type: "command", command: "frontload hook pre-tool-use --host claude" }] },
           { matcher: "Read", hooks: [{ type: "command", command: "keep" }] },
+          "keep-unknown-entry",
         ],
       },
       theme: "dark",
@@ -85,7 +86,10 @@ describe("Frontload uninstall", () => {
       mcpServers: { keep: { command: "keep" } },
     });
     expect(JSON.parse(fs.readFileSync(claudeSettings, "utf8"))).toEqual({
-      hooks: { PreToolUse: [{ matcher: "Read", hooks: [{ type: "command", command: "keep" }] }] },
+      hooks: { PreToolUse: [
+        { matcher: "Read", hooks: [{ type: "command", command: "keep" }] },
+        "keep-unknown-entry",
+      ] },
       theme: "dark",
     });
     expect(fs.readFileSync(opencodeConfig, "utf8")).toContain("keep this comment");
