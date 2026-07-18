@@ -17,11 +17,12 @@ import { runSummary } from "../commands/run.js";
 import { compactRankedResults, generateDossier, searchIndexMeasured } from "../dossier/dossier.js";
 import { compareCost, gitDiffSummary } from "../diff/diff.js";
 import { buildIndex } from "../indexer/indexer.js";
-import { parseHookHost, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
+import { parseHookHost, readStdin, runPostToolUseHook, runPreToolUseHook } from "../gate/entry.js";
 import { runtimeRepoFromCwd } from "../gate/runtime.js";
 import { formatCommand, globalInstallCommand, initAll, installGlobalFrontload, isGloballyInstalled, mcpConfigAdapters, needsShellForWindowsShim, packageRoot, parseAgents, parseConfigScope, resolveGlobalExecutable, upgradeAll, upgradeGlobalFrontload, type AgentName, type ConfigScope, type GlobalInstallResult } from "../install/install.js";
 import { startMcp } from "../mcp/server.js";
 import { validateBundledPlugins } from "../plugins/validate.js";
+import { agentIntegrationsPaused, agentIntegrationsPauseMessage } from "../product/status.js";
 import { BaselineKind } from "../types.js";
 import { ensureStateDir, resolveRepo, stateDir, stateExcludeStatus } from "../utils/path.js";
 import { readJsonc } from "../utils/jsonc.js";
@@ -88,7 +89,12 @@ function proofDisplayPath(repoRoot: string, filePath: string): string {
 }
 
 const program = new Command();
-program.name("frontload").description("Local-first context and cost gateway for AI coding agents.").version(packageVersion);
+program.name("frontload").description("Paused agent-integration experiment.").version(packageVersion);
+
+function rejectPausedAgentIntegration(): void {
+  process.stderr.write(`${agentIntegrationsPauseMessage}\n`);
+  process.exitCode = 1;
+}
 
 function repoFromCwdOption(): Option {
   return new Option("--repo-from-cwd").hideHelp();
@@ -748,6 +754,10 @@ program
   .option("--force")
   .option("--yes", "approve installing frontload globally if needed")
   .action(async (opts) => {
+    if (agentIntegrationsPaused) {
+      rejectPausedAgentIntegration();
+      return;
+    }
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     let agents: ReturnType<typeof parseAgents>;
     if (opts.agents === undefined) {
@@ -794,6 +804,10 @@ program
   .addOption(new Option("--global-install-action <action>").hideHelp())
   .addOption(new Option("--global-install-command <command>").hideHelp())
   .action(async (opts) => {
+    if (agentIntegrationsPaused) {
+      rejectPausedAgentIntegration();
+      return;
+    }
     const homeDir = opts.home ? path.resolve(opts.home) : os.homedir();
     const repoRoot = resolveRepo(opts.repo);
     if (opts.refreshOnly) {
@@ -979,14 +993,30 @@ program.command("budget").option("--repo <repo>", "repository root", ".").action
 program.command("validate-plugins").option("--repo <repo>", "repository root", ".").action((opts) => print(validateBundledPlugins(resolveRepo(opts.repo))));
 const hook = program.command("hook");
 hook.command("pre-tool-use").requiredOption("--host <host>").action(async (opts) => {
-  const output = await runPreToolUseHook(parseHookHost(opts.host));
+  const host = parseHookHost(opts.host);
+  if (agentIntegrationsPaused) {
+    await readStdin();
+    return;
+  }
+  const output = await runPreToolUseHook(host);
   if (output) process.stdout.write(output);
 });
 hook.command("post-tool-use").requiredOption("--host <host>").action(async (opts) => {
-  const output = await runPostToolUseHook(parseHookHost(opts.host));
+  const host = parseHookHost(opts.host);
+  if (agentIntegrationsPaused) {
+    await readStdin();
+    return;
+  }
+  const output = await runPostToolUseHook(host);
   if (output) process.stdout.write(output);
 });
-program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => startMcp(resolveRepo(opts.repo)));
+program.command("mcp").option("--repo <repo>", "repository root", ".").action((opts) => {
+  if (agentIntegrationsPaused) {
+    rejectPausedAgentIntegration();
+    return;
+  }
+  return startMcp(resolveRepo(opts.repo));
+});
 program.command("proof").option("--repo <repo>", "repository root", ".").action((opts) => {
   const repoRoot = resolveRepo(opts.repo);
   const stateRoot = ensureStateDir(repoRoot);

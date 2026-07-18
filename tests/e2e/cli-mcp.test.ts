@@ -846,6 +846,50 @@ describe("e2e proof workflow", () => {
     }
   });
 
+  it("keeps every agent integration paused", async () => {
+    const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-paused-repo-"));
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-paused-home-"));
+    const bin = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-paused-bin-"));
+    writeShellScript(path.join(bin, "frontload"), "#!/bin/sh\nexit 0\n");
+    const cli = path.resolve("dist/src/cli/index.js");
+    const env = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` };
+    const commands = [
+      ["init", "--repo", repo, "--agents", "all", "--home", home],
+      ["upgrade", "--refresh-only", "--repo", repo, "--home", home],
+      ["mcp", "--repo", repo]
+    ];
+
+    for (const args of commands) {
+      const result = await execa(process.execPath, [cli, ...args], {
+        env,
+        reject: false,
+        timeout: 2000
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("agent integrations are paused");
+    }
+
+    expect(fs.existsSync(path.join(repo, ".codex/config.toml"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
+    expect(fs.existsSync(path.join(repo, "opencode.json"))).toBe(false);
+
+    const payload = JSON.stringify({
+      cwd: repo,
+      tool_name: "Bash",
+      tool_input: { command: "pnpm test" }
+    });
+    for (const host of ["codex", "claude"]) {
+      const hook = await execa(process.execPath, [
+        cli,
+        "hook",
+        "pre-tool-use",
+        "--host",
+        host
+      ], { input: payload });
+      expect(hook.stdout).toBe("");
+    }
+  });
+
   it("creates project-local Codex MCP config from the built init command", async () => {
     const repo = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-codex-"));
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "frontload-cli-init-home-"));
