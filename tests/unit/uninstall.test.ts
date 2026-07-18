@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
-import { uninstallArtifacts } from "../../src/install/uninstall.js";
+import {
+  globalUninstallCommands,
+  uninstallArtifacts,
+  uninstallFrontload,
+  uninstallGlobalPackages,
+  type PackageRemovalRunner,
+} from "../../src/install/uninstall.js";
 import { stateExcludeStatus } from "../../src/utils/path.js";
 
 function writeJson(file: string, value: unknown): void {
@@ -190,6 +196,53 @@ describe("Frontload uninstall", () => {
       claudeConfig,
     ]));
     expect(fs.existsSync(skillPath)).toBe(false);
+    expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(false);
+  });
+
+  it("removes global package installs across supported package managers", () => {
+    expect(globalUninstallCommands()).toEqual([
+      { packageManager: "npm", command: "npm", args: ["uninstall", "-g", "frontload"] },
+      { packageManager: "pnpm", command: "pnpm", args: ["remove", "-g", "frontload"] },
+      { packageManager: "yarn", command: "yarn", args: ["global", "remove", "frontload"] },
+      { packageManager: "bun", command: "bun", args: ["remove", "-g", "frontload"] },
+    ]);
+    const calls: string[] = [];
+    const runner: PackageRemovalRunner = (command, args) => {
+      calls.push([command, ...args].join(" "));
+      if (command === "pnpm") throw Object.assign(new Error("spawn pnpm ENOENT"), { code: "ENOENT" });
+      if (command === "yarn") throw Object.assign(new Error("not installed"), { stderr: 'Package "frontload" is not in your dependencies' });
+      if (command === "bun") throw Object.assign(new Error("permission denied"), { stderr: "permission denied" });
+      return "";
+    };
+
+    const records = uninstallGlobalPackages(runner);
+
+    expect(calls).toEqual([
+      "npm uninstall -g frontload",
+      "pnpm remove -g frontload",
+      "yarn global remove frontload",
+      "bun remove -g frontload",
+    ]);
+    expect(records.map(({ target, status }) => ({ target, status }))).toEqual([
+      { target: "npm uninstall -g frontload", status: "removed" },
+      { target: "pnpm remove -g frontload", status: "absent" },
+      { target: "yarn global remove frontload", status: "absent" },
+      { target: "bun remove -g frontload", status: "failed" },
+    ]);
+  });
+
+  it("keeps the package when requested", async () => {
+    const { repo, home } = await initializedRepo();
+    const calls: string[] = [];
+    const runner: PackageRemovalRunner = (command) => {
+      calls.push(command);
+      return "";
+    };
+
+    const result = uninstallFrontload(repo, home, { keepPackage: true, runner });
+
+    expect(calls).toEqual([]);
+    expect(result.records.some((record) => record.category === "package")).toBe(false);
     expect(fs.existsSync(path.join(repo, ".frontload"))).toBe(false);
   });
 });

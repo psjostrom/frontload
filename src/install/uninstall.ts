@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { parse, type ParseError } from "jsonc-parser";
-import { mcpConfigAdapters, type AgentName } from "./install.js";
+import { mcpConfigAdapters, needsShellForWindowsShim, type AgentName } from "./install.js";
 import { removeStateDirIgnore } from "../utils/path.js";
 
 export type RemovalRecord = {
@@ -18,6 +19,20 @@ export type UninstallArtifactsResult = {
   records: RemovalRecord[];
   failures: RemovalRecord[];
 };
+
+export type GlobalUninstallCommand = {
+  packageManager: "npm" | "pnpm" | "yarn" | "bun";
+  command: string;
+  args: string[];
+};
+
+export type PackageRemovalRunner = (
+  command: string,
+  args: string[],
+  options: { encoding: "utf8"; stdio: ["ignore", "pipe", "pipe"]; shell?: boolean },
+) => unknown;
+
+export type UninstallResult = UninstallArtifactsResult;
 
 type JsonObject = Record<string, unknown>;
 
@@ -198,6 +213,64 @@ export function uninstallArtifacts(repoRoot: string, homeDir = os.homedir()): Un
   return {
     repoRoot: absRepo,
     homeDir: absHome,
+    records,
+    failures: records.filter((record) => record.status === "failed"),
+  };
+}
+
+export function globalUninstallCommands(): GlobalUninstallCommand[] {
+  return [
+    { packageManager: "npm", command: "npm", args: ["uninstall", "-g", "frontload"] },
+    { packageManager: "pnpm", command: "pnpm", args: ["remove", "-g", "frontload"] },
+    { packageManager: "yarn", command: "yarn", args: ["global", "remove", "frontload"] },
+    { packageManager: "bun", command: "bun", args: ["remove", "-g", "frontload"] },
+  ];
+}
+
+function packageRemovalWasAbsent(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return true;
+  const detail = typeof error === "object" && error !== null
+    ? ["message", "stderr", "stdout"]
+      .map((key) => key in error ? String((error as Record<string, unknown>)[key]) : "")
+      .join("\n")
+    : String(error);
+  return /not (?:globally )?installed|not in your dependencies|package .*not found|dependency .*not found|no package.*frontload/i.test(detail);
+}
+
+export function uninstallGlobalPackages(runner: PackageRemovalRunner = execFileSync): RemovalRecord[] {
+  return globalUninstallCommands().map((removal) => {
+    const target = [removal.command, ...removal.args].join(" ");
+    try {
+      runner(removal.command, removal.args, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(needsShellForWindowsShim(removal.command) ? { shell: true } : {}),
+      });
+      return { category: "package", target, status: "removed" } satisfies RemovalRecord;
+    } catch (error) {
+      if (packageRemovalWasAbsent(error)) {
+        return { category: "package", target, status: "absent" } satisfies RemovalRecord;
+      }
+      return {
+        category: "package",
+        target,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      } satisfies RemovalRecord;
+    }
+  });
+}
+
+export function uninstallFrontload(
+  repoRoot: string,
+  homeDir = os.homedir(),
+  options: { keepPackage?: boolean; runner?: PackageRemovalRunner } = {},
+): UninstallResult {
+  const artifacts = uninstallArtifacts(repoRoot, homeDir);
+  const packageRecords = options.keepPackage ? [] : uninstallGlobalPackages(options.runner);
+  const records = [...artifacts.records, ...packageRecords];
+  return {
+    ...artifacts,
     records,
     failures: records.filter((record) => record.status === "failed"),
   };
