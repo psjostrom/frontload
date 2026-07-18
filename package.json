@@ -1,6 +1,6 @@
 {
   "name": "frontload",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Agent integrations halted indefinitely; use RTK instead.",
   "type": "module",
   "packageManager": "pnpm@10.14.0",
