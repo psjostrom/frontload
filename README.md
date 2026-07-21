@@ -10,9 +10,10 @@ exposed critical reliability failures. We did not measure Claude Code or
 OpenCode, and have no evidence that those paths are better, so all three agent
 integrations are disabled.
 
-We recommend [RTK](https://github.com/rtk-ai/rtk) instead. RTK already owns the
+~~.We recommend [RTK](https://github.com/rtk-ai/rtk) instead. RTK already owns the
 command-output filtering problem Frontload duplicated, and future Codex
-integration improvements belong upstream there rather than in a second product.
+integration improvements belong upstream there rather than in a second product.~~
+UPDATE: We had a suspicion that RTK's promises were oversold, like frontload's was. It would make sense since the tooling attempts to do the same, albeit in different ways. After testing, our suspicions seem to be correct. (JetBrains did the same, with the same result)[https://blog.jetbrains.com/ai/2026/07/rtk-claude-code-token-savings/]
 
 Existing 0.3.1 installations remain active until updated or removed. This
 revision blocks setup and MCP startup; packaged hooks and plugins are inert. The
